@@ -1,0 +1,136 @@
+[pixel shader fail]
+    float4 main() : sv_target
+    {
+        float4 x, x;
+
+        return 0;
+    }
+
+[pixel shader fail]
+    float4 main() : sv_target
+    {
+        float4 x;
+        float4 x;
+
+        return 0;
+    }
+
+[pixel shader fail]
+    float4 x;
+    float4 x;
+
+    float4 main() : sv_target
+    {
+        return 0;
+    }
+
+[pixel shader]
+    float4 x;
+
+    float4 main() : sv_target
+    {
+        float4 x;
+
+        return 0;
+    }
+
+[pixel shader]
+    float4 x;
+
+    float4 main(float4 x : TEXCOORD) : sv_target
+    {
+        return x;
+    }
+
+[pixel shader fail]
+    float4 main(float4 x : TEXCOORD) : sv_target
+    {
+        float4 x;
+        return 0;
+    }
+
+[pixel shader fail]
+    float4 main(float4 x : TEXCOORD, float4 x : TEXCOORD) : sv_target
+    {
+        return 0;
+    }
+
+[pixel shader]
+    float4 main() : sv_target
+    {
+        float4 x = 1;
+        {
+            return x;
+        }
+    }
+
+[pixel shader]
+    float4 main(float4 x : TEXCOORD) : sv_target
+    {
+        {
+            float4 x = 1;
+            return x;
+        }
+    }
+
+[pixel shader fail]
+    float4 main() : sv_target
+    {
+        {
+            float4 x = 1;
+        }
+        return x;
+    }
+
+[pixel shader]
+    float4 main() : sv_target
+    {
+        float4 x = 1;
+        if (1)
+        {
+            return x;
+        }
+    }
+
+[pixel shader]
+    float4 main(float4 x : TEXCOORD) : sv_target
+    {
+        if (1)
+        {
+            float4 x = 1;
+            return x;
+        }
+    }
+
+[pixel shader fail]
+    float4 main() : sv_target
+    {
+        if (1)
+        {
+            float4 x = 1;
+        }
+        return x;
+    }
+
+[pixel shader fail]
+    {
+        float4 x = 1;
+    }
+    float4 main() : sv_target
+    {
+        return 0;
+    }
+
+[pixel shader fail]
+    float4 main() : sv_target
+    {
+        return x;
+        float4 x = 1;
+    }
+
+[pixel shader fail]
+    float4 main() : sv_target
+    {
+        return x;
+    }
+    float4 x;
