@@ -1,0 +1,22 @@
+From 69f85e378cfe77e34759047bd4be35ea900f53fa Mon Sep 17 00:00:00 2001
+From: Etaash Mathamsetty
+ <45927311+Etaash-mathamsetty@users.noreply.github.com>
+Date: Wed, 7 May 2025 13:47:43 -0400
+Subject: [PATCH 033/486] Create .gitignore
+
+---
+ .gitignore | 2 ++
+ 1 file changed, 2 insertions(+)
+ create mode 100644 .gitignore
+
+diff --git a/.gitignore b/.gitignore
+new file mode 100644
+index 00000000000..66d83f5f1d4
+--- /dev/null
++++ b/.gitignore
+@@ -0,0 +1,2 @@
++.idea
++compile_commands.json
+-- 
+2.53.0
+
