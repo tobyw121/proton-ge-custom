@@ -1,0 +1,58 @@
+name: Release
+
+on:
+  release:
+    types: [ published ]
+  push:
+    tags:
+      - 'GE-Proton*-*'
+
+concurrency:
+  group: ${{ github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build
+    uses: ./.github/workflows/_job_build.yml
+    with:
+      name: ${{ github.ref_name }}
+
+  release:
+    name: Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        fetch-depth: 0
+        fetch-tags: true
+    - name: Tags
+      shell: bash
+      run: |
+        git fetch origin +refs/tags/*:refs/tags/*
+    - name: Create
+      id: create
+      shell: bash
+      run: >-
+        gh
+        release create
+        ${{ github.ref_name }}
+        --latest
+        --title "${{ github.ref_name }} Released"
+        --notes-from-tag
+        --verify-tag
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  upload:
+    name: Upload
+    needs: release
+    strategy:
+      matrix:
+        include:
+          - name: ${{ github.ref_name }}
+    uses: ./.github/workflows/_job_upload.yml
+    with:
+      version: ${{ github.ref_name }}
+      name: ${{ matrix.name }}
