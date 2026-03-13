@@ -1,0 +1,16 @@
+/dist
+/dist-*
+/obj-*
+/syn-*
+
+/.vagrant/
+/vagrant_share/
+github_uploader.sh
+build/obj-glslang-x86_64/glslang/CMakeFiles/MachineIndependent.dir/cmake_pch.hxx.gch
+build/obj-vkd3d-proton-x86_64/libs/d3d12core/d3d12core.dll
+build/obj-dxvk-i386/src/d3d11/d3d11.dll
+build/obj-dxvk-i386/src/dxgi/dxgi.dll
+build/obj-dxvk-i386/src/d3d9/d3d9.dll
+build/obj-dxvk-x86_64/src/d3d11/d3d11.dll
+build/obj-dxvk-x86_64/src/dxgi/dxgi.dll
+build/obj-dxvk-x86_64/src/d3d9/d3d9.dll
