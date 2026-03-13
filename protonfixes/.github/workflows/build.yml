@@ -1,0 +1,44 @@
+name: make
+
+on:
+  push:
+    branches: ["master"]
+  pull_request:
+    branches: ["master"]
+
+permissions:
+  contents: read
+
+jobs:
+  steamrt3:
+    runs-on: ubuntu-latest
+    container: registry.gitlab.steamos.cloud/steamrt/sniper/sdk:beta
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - name: Build umu-protonfixes
+        run: |
+          make
+
+  steamrt4:
+    runs-on: ubuntu-latest
+    container: registry.gitlab.steamos.cloud/steamrt/steamrt4/sdk:beta
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - name: Build umu-protonfixes
+        run: |
+          make
+
+  umu:
+    runs-on: ubuntu-latest
+    container: ghcr.io/open-wine-components/umu-sdk:latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - name: Build umu-protonfixes
+        run: |
+          make
