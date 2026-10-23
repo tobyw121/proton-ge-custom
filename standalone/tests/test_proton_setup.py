@@ -19,7 +19,7 @@ class ProtonSetupTests(unittest.TestCase):
         self.environment_patch.start()
         self.addCleanup(self.environment_patch.stop)
         self.environment = {"PROTONPATH": str(launcher.pinned_proton_directory()),
-                            "WINEPREFIX": str(self.home / "prefixes/icarus-ge10-frisch")}
+                            "WINEPREFIX": str(self.home / "prefixes/icarus-ge10-34-clean")}
 
     def archive(self, name=None):
         output = io.BytesIO()
@@ -65,10 +65,10 @@ class ProtonSetupTests(unittest.TestCase):
             launcher.ensure_proton(self.environment, lambda text: None)
         self.assertEqual((target / "user-file").read_text(), "keep")
 
-    def test_ge10_backup_keeps_original_files_and_symlinks(self):
+    def test_backup_before_major_change_keeps_original_files_and_symlinks(self):
         prefix = Path(self.environment["WINEPREFIX"])
         prefix.mkdir(parents=True)
-        (prefix / "version").write_text("GE-Proton10-34")
+        (prefix / "version").write_text("GE-Proton11-11")
         (prefix / "savegame").write_text("keep my game")
         (prefix / "pfx").symlink_to(".")
         launcher.backup_before_upgrade(self.environment, lambda text: None)
@@ -76,6 +76,13 @@ class ProtonSetupTests(unittest.TestCase):
         self.assertEqual(len(backups), 1)
         self.assertEqual((backups[0] / "savegame").read_text(), "keep my game")
         self.assertTrue((backups[0] / "pfx").is_symlink())
-        self.assertEqual((prefix / "version").read_text(), "GE-Proton10-34")
+        self.assertEqual((prefix / "version").read_text(), "GE-Proton11-11")
         launcher.backup_before_upgrade(self.environment, lambda text: None)
         self.assertEqual(len(list((prefix.parent / ".ge-wine-backups").iterdir())), 1)
+
+    def test_existing_ge10_prefix_is_not_migrated_or_backed_up(self):
+        prefix = Path(self.environment["WINEPREFIX"])
+        prefix.mkdir(parents=True)
+        (prefix / "version").write_text("GE-Proton10-34")
+        launcher.backup_before_upgrade(self.environment, lambda text: None)
+        self.assertFalse((prefix.parent / ".ge-wine-backups").exists())

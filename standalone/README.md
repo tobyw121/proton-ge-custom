@@ -36,8 +36,8 @@ Windows-/GPU-Tests sind darin nicht enthalten.
 ```sh
 bash standalone/build_deb.sh /tmp/ge-wine-dist
 cd /tmp/ge-wine-dist
-sha256sum -c ge-wine_0.4.1_amd64.deb.sha256
-sudo apt install ./ge-wine_0.4.1_amd64.deb
+sha256sum -c ge-wine_0.4.2_amd64.deb.sha256
+sudo apt install ./ge-wine_0.4.2_amd64.deb
 ```
 
 Anschließend im Anwendungsmenü **GE-Wine** öffnen oder:
@@ -68,7 +68,8 @@ Ohne Angabe wird je Verzeichnis der EXE ein eigener Prefix unter
 
 ## Version und Spiele-Fixes
 
-Seit 0.4.0 ist standardmäßig **GE-Proton11-11-x86_64** fest eingestellt.
+Seit 0.4.2 ist standardmäßig **GE-Proton10-34** fest eingestellt.
+Damit wird die Proton-11-Vorgabe aus 0.4.0 nach den gemeldeten Startproblemen zurückgenommen.
 Der Download stammt aus dem offiziellen Release, wird vor dem Entpacken mit
 dessen SHA512-Datei geprüft und anschließend wiederverwendet. Mit
 `--proton GE-Proton` kann weiterhin ausdrücklich die jeweils neueste
@@ -113,12 +114,11 @@ ge-wine '/pfad/ICARUS_Phoenix/Launcher.exe'
 ge-wine --profile icarus-phoenix '/pfad/ICARUS_Phoenix/Launcher.exe'
 ```
 
-Seit 0.4.0 verwendet das Icarus-Profil standardmäßig den vom Nutzer gewünschten
-Prefix `~/.local/share/ge-wine/prefixes/icarus-ge10-frisch`. Auf dem Rechner von
-`ssc` ergibt das `/home/ssc/.local/share/ge-wine/prefixes/icarus-ge10-frisch`.
-Die Oberfläche trägt diesen Pfad bereits ein. Der Ordnername bleibt auf Wunsch
-erhalten, auch wenn der Inhalt auf Proton 11 aktualisiert wird. Ein explizites
-`--prefix` hat Vorrang; mehrere Spielinstallationen müssen bei Bedarf getrennte
+Seit 0.4.2 verwendet das Icarus-Profil den separaten Prefix
+`~/.local/share/ge-wine/prefixes/icarus-ge10-34-clean`. Die Oberfläche trägt
+diesen Pfad bereits ein. Der zuvor mit Proton 11 verwendete Ordner
+`icarus-ge10-frisch` bleibt erhalten und wird nicht automatisch übernommen.
+Ein explizites `--prefix` hat Vorrang; mehrere Spielinstallationen müssen bei Bedarf getrennte
 Prefixe bekommen. Launcher, Spiel und Installer des Icarus-Profils verwenden
 standardmäßig denselben Prefix.
 
@@ -211,24 +211,33 @@ Das Paket enthält UMU unter GPL-3.0; dessen vollständiger zugehöriger
 Quelltextstand liegt unter `/usr/share/doc/ge-wine/umu-source.tar.gz`.
 Weitere Lizenzhinweise stehen in den jeweiligen UMU-Quelldateien.
 
-## Aktuelle Icarus-Vorgaben ab 0.4.0
+## Wiederanlauf nach dem Wechsel auf Proton 11 (ab 0.4.2)
 
-- Prefix: `~/.local/share/ge-wine/prefixes/icarus-ge10-frisch`.
-- GE-Proton: `GE-Proton11-11-x86_64` aus
-  https://github.com/GloriousEggroll/proton-ge-custom/releases/download/GE-Proton11-11/GE-Proton11-11-x86_64.tar.gz
-- Im Icarus-Profil: `d3d9.floatEmulation = True` wird an `DXVK_CONFIG` angehängt.
-  Eine ausdrücklich im Prozess gesetzte `d3d9.floatEmulation`-Einstellung hat
-  Vorrang; andere DXVK-Einstellungen bleiben erhalten.
+- Vorgabe: GE-Proton10-34 aus dem offiziellen Release, mit SHA512-Prüfung.
+- Separater Prefix: `~/.local/share/ge-wine/prefixes/icarus-ge10-34-clean`.
+- Keine automatisch gesetzte `d3d9.floatEmulation`-Einstellung.
+- Diagnose-Dateilogs und automatische VC++-Einrichtung bleiben verfügbar.
 
-Vor dem ersten Start mit Proton 11 Spiel und Launcher schließen. Wenn im
-Prefix eine ältere GE-Proton-Version eingetragen ist, erstellt GE-Wine vor
-der Aktualisierung eine Kopie unter `<prefix-parent>/.ge-wine-backups/`.
-Die Sicherung erhält Symlinks und ersetzt keine vorhandenen Dateien. Bei
-Download-, Prüfsummen-, Entpack- oder Sicherungsfehlern wird der Start abgebrochen.
-Ein bereits durch UMU oder manuell installierter vollständiger Ordner für
-GE-Proton11-11-x86_64 wird wiederverwendet.
+Spiel und Launcher schließen, das Paket aktualisieren und ohne die bisherige
+DXVK-Umgebungsvariable starten:
 
-Die Sicherung und der Downloader sind mit Test-Archiven und Test-Prefixen
-geprüft. Zusätzlich wurden Download, SHA512-Prüfung und sichere Entpackung
-des echten offiziellen GE-Proton11-11-x86_64-Archivs in der Cloud ausgeführt. Diese Vorgaben entsprechen dem Nutzerwunsch und sind kein bestätigter
-Fix für den früheren Launcher-Absturz oder die CryEngine-Darstellungsfehler.
+```sh
+env -u DXVK_CONFIG ge-wine --gui --profile icarus-phoenix --diagnostics
+```
+
+Den vorgeschlagenen neuen Prefix und GE-Proton10-34 verwenden. Eine explizit
+gewählte alte Prefix-Angabe hat weiterhin Vorrang. Der neue Prefix enthält noch
+keine Einstellungen oder Spielstände aus dem alten Prefix. Die eigentlichen
+Spieldateien werden nicht verändert; Launcher und Spiel müssen auf dem Zielrechner
+getestet werden. Dies ist ein Wiederanlauf mit getrenntem Prefix, keine bestätigte
+Behebung des Absturzes oder der Darstellungsfehler.
+
+Ein geerbtes `DXVK_CONFIG` wird weiterhin respektiert; deshalb ist das `env -u`
+beim Rücknehmen des bisherigen Startbefehls wichtig. Experimentelle kürzere
+Render-Warteschlange für den ersten Versuch ausgeschaltet lassen.
+
+Existiert bereits eine Sicherung von vor dem Wechsel auf Proton 11, liegt sie
+neben dem alten Prefix unter `.ge-wine-backups/`. Diese wird nicht automatisch
+zurückgespielt. Vor einem Wechsel der GE-Proton-Hauptversion im voreingestellten
+Build erstellt GE-Wine eine weitere Prefix-Kopie, ohne vorhandene Dateien zu
+ersetzen. Das ersetzt keine saubere Trennung der Prefixe beim Versionsvergleich.

@@ -19,10 +19,10 @@ import threading
 from urllib.request import urlopen
 
 
-VERSION = "0.4.1"
-PINNED_PROTON = "GE-Proton11-11-x86_64"
+VERSION = "0.4.2"
+PINNED_PROTON = "GE-Proton10-34"
 PROTON_URL = ("https://github.com/GloriousEggroll/proton-ge-custom/releases/download/"
-              "GE-Proton11-11/GE-Proton11-11-x86_64.tar.gz")
+              "GE-Proton10-34/GE-Proton10-34.tar.gz")
 PROFILES = {"auto": "Automatisch erkennen", "standard": "Standard",
             "icarus-phoenix": "Icarus Phoenix – RTX 2070 / 3060"}
 VC_VERBS = ("vcrun2008", "vcrun2010", "vcrun2012", "vcrun2013", "vcrun2015")
@@ -33,7 +33,7 @@ def pinned_proton_directory():
 
 
 def icarus_prefix():
-    return Path.home() / ".local/share/ge-wine/prefixes/icarus-ge10-frisch"
+    return Path.home() / ".local/share/ge-wine/prefixes/icarus-ge10-34-clean"
 
 
 def ensure_proton(environment, report):
@@ -98,7 +98,8 @@ def backup_before_upgrade(environment, report):
         return
     version = version_file.read_text(encoding="utf-8").strip()
     match = re.search(r"GE-Proton(\d+)", version)
-    if not match or int(match[1]) >= 11:
+    target_major = re.search(r"GE-Proton(\d+)", PINNED_PROTON)[1]
+    if not match or match[1] == target_major:
         return
     locks = prefix.parent / ".ge-wine-locks"
     locks.mkdir(parents=True, exist_ok=True)
@@ -108,9 +109,9 @@ def backup_before_upgrade(environment, report):
         backups = prefix.parent / ".ge-wine-backups"
         backups.mkdir(exist_ok=True)
         identifier = hashlib.sha256(version.encode()).hexdigest()[:12]
-        destination = backups / (prefix.name + "-before-ge11-" + identifier)
+        destination = backups / (prefix.name + "-before-ge" + target_major + "-" + identifier)
         if not destination.exists():
-            report(f"Sichere den bisherigen Prefix vor dem Wechsel auf Proton 11: {destination}\n")
+            report(f"Sichere den bisherigen Prefix vor dem Wechsel auf Proton {target_major}: {destination}\n")
             with tempfile.TemporaryDirectory(prefix=".backup-", dir=backups) as temporary:
                 copy = Path(temporary) / "prefix"
                 shutil.copytree(prefix, copy, symlinks=True)
@@ -201,10 +202,6 @@ def prepare(executable, arguments, prefix=None, proton=PINNED_PROTON, gameid="um
     if profile == "icarus-phoenix":
         # Let GE-Proton select DXVK normally, instead of inheriting an OpenGL override.
         environment.pop("PROTON_USE_WINED3D", None)
-        previous = environment.get("DXVK_CONFIG", "").rstrip("; ")
-        if not re.search(r"(?:^|;)\s*d3d9\.floatEmulation\s*=", previous):
-            setting = "d3d9.floatEmulation = True"
-            environment["DXVK_CONFIG"] = f"{previous}; {setting}" if previous else setting
     if nvidia_offload:
         environment.update(__NV_PRIME_RENDER_OFFLOAD="1", __GLX_VENDOR_LIBRARY_NAME="nvidia",
                            __VK_LAYER_NV_optimus="NVIDIA_only")
@@ -311,8 +308,8 @@ def gui(options):
     ttk.Button(root, text="Öffnen …", command=select_file).grid(row=0, column=2, padx=12)
     ttk.Button(root, text="Wählen …", command=lambda: select_folder(prefix)).grid(row=2, column=2)
     ttk.Button(root, text="Wählen …", command=lambda: select_folder(proton)).grid(row=3, column=2)
-    ttk.Label(root, text="Vorgabe: GE-Proton11-11 (SHA512-geprüfter Download bei Bedarf).\n"
-              "Icarus-Vorgabe: icarus-ge10-frisch; d3d9.floatEmulation = True.\n"
+    ttk.Label(root, text="Vorgabe: GE-Proton10-34 (SHA512-geprüfter Download bei Bedarf).\n"
+              "Icarus: separater Prefix icarus-ge10-34-clean; keine Shader-Vorgabe.\n"
               "Prefix vor einem Proton-Wechsel nur bei geschlossenem Spiel verwenden.").grid(
                   row=7, column=0, columnspan=3, sticky="w", padx=12, pady=8)
     status = tk.StringVar(value="Bereit. Beim ersten Start werden GE-Proton und die Laufzeit heruntergeladen.")
@@ -415,7 +412,7 @@ def main(argv=None):
     parser.add_argument("--gui", action="store_true", help="Grafische Oberfläche öffnen")
     parser.add_argument("--prefix", help="Gemeinsamer Programmordner für Installer und Anwendung")
     parser.add_argument("--proton", default=PINNED_PROTON,
-                        help="Vorgabe GE-Proton11-11; alternativ GE-Proton für neueste Version oder Build-Ordner")
+                        help="Vorgabe GE-Proton10-34; alternativ GE-Proton für neueste Version oder Build-Ordner")
     parser.add_argument("--gameid", default=os.environ.get("GAMEID", "umu-default"))
     parser.add_argument("--profile", choices=PROFILES, default="auto")
     parser.add_argument("--no-prerequisites", action="store_true", help="Automatische VC++-Einrichtung überspringen")
