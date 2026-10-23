@@ -36,8 +36,8 @@ Windows-/GPU-Tests sind darin nicht enthalten.
 ```sh
 bash standalone/build_deb.sh /tmp/ge-wine-dist
 cd /tmp/ge-wine-dist
-sha256sum -c ge-wine_0.1.0_amd64.deb.sha256
-sudo apt install ./ge-wine_0.1.0_amd64.deb
+sha256sum -c ge-wine_0.2.0_amd64.deb.sha256
+sudo apt install ./ge-wine_0.2.0_amd64.deb
 ```
 
 Anschließend im Anwendungsmenü **GE-Wine** öffnen oder:
@@ -69,8 +69,10 @@ Ohne Angabe wird je Verzeichnis der EXE ein eigener Prefix unter
 ## Version und Spiele-Fixes
 
 Standardmäßig lädt UMU mit `PROTONPATH=GE-Proton` die offizielle GE-Proton-Version
-herunter. Das ist **kein Build des hier ausgewählten Forks**. Dessen zusätzliche
-Patches sind erst mit einem eigenen, fertig gebauten Proton-Paket verfügbar:
+herunter. Das ist **kein Quellcode-Build dieses Repositorys**. Beim Vergleich
+des ursprünglichen Fork-Stands `88004a04` mit dem offiziellen GE-Proton gab es
+keine eigenen zusätzlichen Proton-Patches. Künftige eigene Builds lassen sich
+weiterhin über ihren entpackten Ordner auswählen:
 
 ```sh
 ge-wine --proton /pfad/zum/entpackten/eigenen-build programm.exe
@@ -85,6 +87,57 @@ Die in der gewählten GE-Proton-Version enthaltenen Patches bleiben erhalten.
 Nicht jedes Windows-Programm, jede Steam-Funktion oder jedes Anti-Cheat-System
 funktioniert damit. Nur vertrauenswürdige Programme ausführen; Wine ist keine
 Sicherheitsisolierung.
+
+## Icarus Phoenix: RTX 2070 und RTX 3060
+
+Version 0.2.0 ergänzt das Profil `icarus-phoenix` sowie den Menüeintrag
+**Icarus Phoenix (GE-Wine)**. Beide Grafikkarten verwenden dasselbe Paket.
+Dies ist ein Start- und Diagnoseprofil, kein gemessener Performance-Patch
+und keine neu kompilierte Proton-Version. Ein aktueller, zur DXVK-Version
+passender NVIDIA-Vulkan-Treiber muss auf dem Rechner installiert sein.
+
+Den Client über die [offizielle Downloadseite](https://icarus-phoenix.online/download)
+beziehen und entpacken. Die Seite nennt etwa 30 GB freien Speicher und den
+Start über `Launcher.exe` **im ursprünglichen Spielordner**:
+
+```sh
+ge-wine --profile icarus-phoenix '/pfad/ICARUS_Phoenix/Launcher.exe'
+```
+
+Das Profil legt je Spielinstallation einen eigenen Prefix an. Solange
+`Launcher.exe` im obersten Spielordner liegt, verwenden auch Programme unter
+`Bin64` und die mitgelieferten Visual-C++-Installer unter `Bin64/Redist`
+denselben Prefix. Einen solchen Installer bei Bedarf mit demselben Profil
+starten. Ein explizites `--prefix` hat immer Vorrang.
+
+GE-Proton übernimmt DX9/DX11 über DXVK. Das Profil entfernt eine geerbte
+`PROTON_USE_WINED3D`-Einstellung, damit nicht versehentlich der OpenGL-Pfad
+verwendet wird. Es erzwingt weder einen Grafikmodus im Spiel noch verändert
+es Spieldateien. Welche DX-Modi der aktuelle Phoenix-Client anbietet, muss
+im Launcher/Spiel geprüft werden; die Server-Webseite dokumentiert das nicht.
+
+Für den ersten Test:
+
+```sh
+ge-wine --profile icarus-phoenix --diagnostics '/pfad/ICARUS_Phoenix/Launcher.exe'
+```
+
+Das DXVK-HUD zeigt GPU, Direct3D-Modus, FPS, Framezeiten und Shader-Compiler-
+Aktivität. DXVK-Protokolle liegen neben dem Prefix in einem Ordner mit
+Endung `-logs`. Bei einem Hybrid-Laptop zusätzlich `--nvidia-offload`
+verwenden bzw. den entsprechenden Haken in der Oberfläche setzen. Auf einem
+Desktop mit nur einer GPU ist das normalerweise nicht nötig.
+
+Mit `--low-latency` lässt sich experimentell die Render-Warteschlange für
+DX9 und DX11 auf einen Frame begrenzen. Das kann die Eingabelatenz verringern,
+aber FPS oder Gleichmäßigkeit verschlechtern; deshalb ist es standardmäßig
+ausgeschaltet. Für einen Vergleich dieselbe Szene, Auflösung und Qualität
+mehrmals mit und ohne diese Option testen und den Shader-Cache warm laufen
+lassen. Es werden keine pauschalen Async-, Speicher- oder Thread-Tweaks erzwungen.
+
+Profilübergabe, gemeinsamer Prefix, Diagnose und GPU-Optionen werden mit einem
+Test-Backend geprüft. Der vollständige Phoenix-Client und die beiden echten
+Grafikkarten standen hier nicht für einen Spiel-/Performance-Test bereit.
 
 ## Prüfung und Grenzen
 

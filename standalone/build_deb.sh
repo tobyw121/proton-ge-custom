@@ -48,9 +48,21 @@ Categories=Utility;Game;
 MimeType=application/x-ms-dos-executable;application/vnd.microsoft.portable-executable;
 StartupNotify=false
 EOF
+cat > "$stage/usr/share/applications/ge-wine-icarus-phoenix.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Icarus Phoenix (GE-Wine)
+Comment=Icarus Phoenix mit GE-Proton starten
+Exec=ge-wine --gui --profile icarus-phoenix %f
+TryExec=ge-wine
+Icon=applications-games
+Terminal=false
+Categories=Game;
+StartupNotify=false
+EOF
 cat > "$stage/DEBIAN/control" <<'EOF'
 Package: ge-wine
-Version: 0.1.0
+Version: 0.2.0
 Architecture: amd64
 Maintainer: GE-Wine contributors <ge-wine@example.invalid>
 Section: utils
@@ -63,6 +75,6 @@ EOF
 find "$stage" -type d -exec chmod 755 {} +
 find "$stage" -type f -exec chmod 644 {} +
 chmod 755 "$stage/usr/bin/ge-wine"
-dpkg-deb --root-owner-group --build "$stage" "$output_dir/ge-wine_0.1.0_amd64.deb"
-(cd "$output_dir" && sha256sum ge-wine_0.1.0_amd64.deb > ge-wine_0.1.0_amd64.deb.sha256)
-printf 'Package: %s/ge-wine_0.1.0_amd64.deb\n' "$output_dir"
+dpkg-deb --root-owner-group --build "$stage" "$output_dir/ge-wine_0.2.0_amd64.deb"
+(cd "$output_dir" && sha256sum ge-wine_0.2.0_amd64.deb > ge-wine_0.2.0_amd64.deb.sha256)
+printf 'Package: %s/ge-wine_0.2.0_amd64.deb\n' "$output_dir"

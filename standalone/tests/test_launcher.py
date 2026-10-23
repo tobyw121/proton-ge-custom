@@ -27,7 +27,9 @@ class LauncherTests(unittest.TestCase):
             f"#!{sys.executable}\n"
             "import json, os, sys\n"
             "print(json.dumps({'args':sys.argv[1:], 'prefix':os.environ['WINEPREFIX'],"
-            "'proton':os.environ['PROTONPATH'], 'gameid':os.environ['GAMEID'], 'cwd':os.getcwd()}))\n"
+            "'proton':os.environ['PROTONPATH'], 'gameid':os.environ['GAMEID'], 'cwd':os.getcwd(),"
+            "'graphics':{k:os.environ[k] for k in ('DXVK_HUD','DXVK_LOG_PATH','DXVK_CONFIG',"
+            "'__NV_PRIME_RENDER_OFFLOAD','__VK_LAYER_NV_optimus','PROTON_USE_WINED3D') if k in os.environ}}))\n"
             "sys.exit(int(os.environ.get('TEST_EXIT', '0')))\n")
         self.backend.chmod(0o755)
 
@@ -87,6 +89,47 @@ class LauncherTests(unittest.TestCase):
         result = self.run_cli(self.exe)
         self.assertEqual(result.returncode, 1)
         self.assertIn("vollständige GE-Wine-Paket", result.stderr)
+
+    def test_icarus_launcher_game_and_redist_share_prefix(self):
+        launcher_exe = self.root / "Launcher.exe"
+        launcher_exe.touch()
+        redist = self.root / "Bin64" / "Redist" / "vcredist.exe"
+        redist.parent.mkdir(parents=True)
+        redist.touch()
+        game = self.root / "Bin64" / "Game.exe"
+        game.touch()
+        records = []
+        for executable in (launcher_exe, redist, game):
+            result = self.run_cli("--profile", "icarus-phoenix", executable)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            records.append(json.loads(result.stdout))
+        self.assertEqual(len({record["prefix"] for record in records}), 1)
+        self.assertIn("icarus-phoenix-", records[0]["prefix"])
+        self.assertEqual(records[2]["cwd"], str(game.parent))
+
+    def test_diagnostics_create_logs_and_forward_nvidia_and_latency_settings(self):
+        prefix = self.root / "Icarus prefix"
+        result = self.run_cli("--profile", "icarus-phoenix", "--diagnostics",
+                              "--nvidia-offload", "--low-latency", "--prefix", prefix, self.exe)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        graphics = json.loads(result.stdout)["graphics"]
+        self.assertIn("api", graphics["DXVK_HUD"].split(","))
+        self.assertTrue(Path(graphics["DXVK_LOG_PATH"]).is_dir())
+        self.assertEqual(graphics["__NV_PRIME_RENDER_OFFLOAD"], "1")
+        self.assertEqual(graphics["__VK_LAYER_NV_optimus"], "NVIDIA_only")
+        self.assertIn("dxgi.maxFrameLatency = 1", graphics["DXVK_CONFIG"])
+        self.assertIn("d3d9.maxFrameLatency = 1", graphics["DXVK_CONFIG"])
+
+    def test_icarus_removes_opengl_override_without_forcing_rendering_tweaks(self):
+        with patch("shutil.which", return_value=str(self.backend)), patch.dict(
+                os.environ, {"PROTON_USE_WINED3D": "1", "DXVK_CONFIG": "dxvk.numCompilerThreads = 4"}):
+            environment = launcher.prepare(self.exe, [], profile="icarus-phoenix")[1]
+            self.assertNotIn("PROTON_USE_WINED3D", environment)
+            self.assertEqual(environment["DXVK_CONFIG"], "dxvk.numCompilerThreads = 4")
+            standard = launcher.prepare(self.exe, [])[1]
+            self.assertEqual(standard["PROTON_USE_WINED3D"], "1")
+            latency = launcher.prepare(self.exe, [], low_latency=True)[1]
+            self.assertIn("dxvk.numCompilerThreads = 4; dxgi.maxFrameLatency = 1", latency["DXVK_CONFIG"])
 
 
 if __name__ == "__main__":
