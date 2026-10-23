@@ -8,16 +8,114 @@ import hashlib
 import os
 from pathlib import Path
 import queue
+import re
 import shlex
+import shutil
 import subprocess
 import sys
+import tarfile
+import tempfile
 import threading
+from urllib.request import urlopen
 
 
-VERSION = "0.3.0"
+VERSION = "0.4.0"
+PINNED_PROTON = "GE-Proton11-11-x86_64"
+PROTON_URL = ("https://github.com/GloriousEggroll/proton-ge-custom/releases/download/"
+              "GE-Proton11-11/GE-Proton11-11-x86_64.tar.gz")
 PROFILES = {"auto": "Automatisch erkennen", "standard": "Standard",
             "icarus-phoenix": "Icarus Phoenix – RTX 2070 / 3060"}
 VC_VERBS = ("vcrun2008", "vcrun2010", "vcrun2012", "vcrun2013", "vcrun2015")
+
+
+def pinned_proton_directory():
+    return Path.home() / ".local/share/Steam/compatibilitytools.d" / PINNED_PROTON
+
+
+def icarus_prefix():
+    return Path.home() / ".local/share/ge-wine/prefixes/icarus-ge10-frisch"
+
+
+def ensure_proton(environment, report):
+    target = pinned_proton_directory()
+    if environment["PROTONPATH"] != str(target):
+        return
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with (target.parent / ".ge-wine-proton-download.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if (target / "proton").is_file():
+            report(f"Verwende {PINNED_PROTON}.\n")
+            return
+        if target.exists():
+            raise ValueError(f"Unvollständiger Proton-Ordner: {target}. Bitte einen vollständigen Build auswählen.")
+        report(f"Lade {PINNED_PROTON} herunter und prüfe SHA512 …\n")
+        with urlopen(PROTON_URL.removesuffix(".tar.gz") + ".sha512sum", timeout=60) as response:
+            checksum = response.read(32769)
+        if len(checksum) > 32768:
+            raise ValueError("Ungültige Proton-Prüfsummendatei.")
+        expected = None
+        for line in checksum.decode("ascii").splitlines():
+            fields = line.split()
+            if len(fields) == 2 and fields[1].lstrip("*") == PINNED_PROTON + ".tar.gz":
+                expected = fields[0].lower()
+        if not expected or not re.fullmatch(r"[0-9a-f]{128}", expected):
+            raise ValueError("Keine passende SHA512-Prüfsumme für das Proton-Archiv gefunden.")
+        with tempfile.TemporaryDirectory(prefix=".ge-wine-download-", dir=target.parent) as temporary:
+            archive = Path(temporary) / "proton.tar.gz"
+            digest = hashlib.sha512()
+            size = 0
+            with urlopen(PROTON_URL, timeout=60) as response, archive.open("wb") as output:
+                while chunk := response.read(1024 * 1024):
+                    size += len(chunk)
+                    if size > 2 * 1024**3:
+                        raise ValueError("Proton-Download ist unerwartet groß.")
+                    digest.update(chunk)
+                    output.write(chunk)
+                    if size % (64 * 1024**2) == 0:
+                        report(f"Proton-Download: {size // 1024**2} MiB …\n")
+            if digest.hexdigest() != expected:
+                raise ValueError("SHA512-Prüfung fehlgeschlagen; Proton wird nicht installiert.")
+            report("SHA512 stimmt. Entpacke Proton …\n")
+            extracted = Path(temporary) / "extracted"
+            extracted.mkdir()
+            with tarfile.open(archive, "r:gz") as source:
+                for member in source.getmembers():
+                    if not Path(member.name).parts or Path(member.name).parts[0] != PINNED_PROTON:
+                        raise ValueError("Unerwarteter Pfad im Proton-Archiv.")
+                source.extractall(extracted, filter="data")
+            if not (extracted / PINNED_PROTON / "proton").is_file():
+                raise ValueError("Das geprüfte Archiv enthält kein Proton-Startprogramm.")
+            (extracted / PINNED_PROTON).rename(target)
+            report(f"{PINNED_PROTON} ist installiert.\n")
+
+
+def backup_before_upgrade(environment, report):
+    if environment["PROTONPATH"] != str(pinned_proton_directory()):
+        return
+    prefix = Path(environment["WINEPREFIX"])
+    version_file = prefix / "version"
+    if not version_file.is_file():
+        return
+    version = version_file.read_text(encoding="utf-8").strip()
+    match = re.search(r"GE-Proton(\d+)", version)
+    if not match or int(match[1]) >= 11:
+        return
+    locks = prefix.parent / ".ge-wine-locks"
+    locks.mkdir(parents=True, exist_ok=True)
+    key = hashlib.sha256(os.fsencode(prefix)).hexdigest()
+    with (locks / (key + ".lock")).open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        backups = prefix.parent / ".ge-wine-backups"
+        backups.mkdir(exist_ok=True)
+        identifier = hashlib.sha256(version.encode()).hexdigest()[:12]
+        destination = backups / (prefix.name + "-before-ge11-" + identifier)
+        if not destination.exists():
+            report(f"Sichere den bisherigen Prefix vor dem Wechsel auf Proton 11: {destination}\n")
+            with tempfile.TemporaryDirectory(prefix=".backup-", dir=backups) as temporary:
+                copy = Path(temporary) / "prefix"
+                shutil.copytree(prefix, copy, symlinks=True)
+                copy.rename(destination)
+        report(f"Prefix-Sicherung vorhanden: {destination}\n")
 
 
 def selected_profile(executable, profile):
@@ -72,7 +170,7 @@ def install_prerequisites(command, environment, directory, run, report):
     return 0
 
 
-def prepare(executable, arguments, prefix=None, proton="GE-Proton", gameid="umu-default",
+def prepare(executable, arguments, prefix=None, proton=PINNED_PROTON, gameid="umu-default",
             profile="auto", diagnostics=False, nvidia_offload=False, low_latency=False):
     if profile not in PROFILES:
         raise ValueError(f"Unbekanntes Profil: {profile}")
@@ -82,23 +180,17 @@ def prepare(executable, arguments, prefix=None, proton="GE-Proton", gameid="umu-
     profile = selected_profile(executable, profile)
     if not gameid.strip():
         raise ValueError("Die Spielkennung darf nicht leer sein.")
-    if proton != "GE-Proton":
+    if proton in {PINNED_PROTON, PROTON_URL}:
+        proton = str(pinned_proton_directory())
+    elif proton != "GE-Proton":
         proton_path = Path(proton).expanduser().resolve()
         if not (proton_path / "proton").is_file():
             raise ValueError("Der GE-Proton-Ordner muss die Datei 'proton' enthalten.")
         proton = str(proton_path)
+    if not prefix and profile == "icarus-phoenix":
+        prefix = icarus_prefix()
     if not prefix:
-        install_root = executable.parent
-        if profile == "icarus-phoenix":
-            # The server distributes Launcher.exe beside Bin64/Redist.
-            # Its redistributables and game must use the launcher's prefix.
-            for parent in executable.parents:
-                if (parent / "Launcher.exe").is_file():
-                    install_root = parent
-                    break
-        identifier = hashlib.sha256(os.fsencode(install_root)).hexdigest()[:16]
-        if profile != "standard":
-            identifier = f"{profile}-{identifier}"
+        identifier = hashlib.sha256(os.fsencode(executable.parent)).hexdigest()[:16]
         prefix = Path.home() / ".local/share/ge-wine/prefixes" / identifier
     prefix = Path(prefix).expanduser().resolve()
     if prefix.exists() and not prefix.is_dir():
@@ -109,6 +201,10 @@ def prepare(executable, arguments, prefix=None, proton="GE-Proton", gameid="umu-
     if profile == "icarus-phoenix":
         # Let GE-Proton select DXVK normally, instead of inheriting an OpenGL override.
         environment.pop("PROTON_USE_WINED3D", None)
+        previous = environment.get("DXVK_CONFIG", "").rstrip("; ")
+        if not re.search(r"(?:^|;)\s*d3d9\.floatEmulation\s*=", previous):
+            setting = "d3d9.floatEmulation = True"
+            environment["DXVK_CONFIG"] = f"{previous}; {setting}" if previous else setting
     if nvidia_offload:
         environment.update(__NV_PRIME_RENDER_OFFLOAD="1", __GLX_VENDOR_LIBRARY_NAME="nvidia",
                            __VK_LAYER_NV_optimus="NVIDIA_only")
@@ -139,11 +235,14 @@ def launch_cli(options):
         options.profile, options.diagnostics, options.nvidia_offload, options.low_latency)
     if options.diagnostics:
         Path(environment["DXVK_LOG_PATH"]).mkdir(parents=True, exist_ok=True)
+    report = lambda text: print(text, end="", file=sys.stderr, flush=True)
+    ensure_proton(environment, report)
+    backup_before_upgrade(environment, report)
     if needs_prerequisites(options.executable, options.profile, not options.no_prerequisites):
         result = install_prerequisites(
             command, environment, directory,
             lambda cmd, env, cwd: subprocess.call(cmd, env=env, cwd=cwd),
-            lambda text: print(text, end="", file=sys.stderr, flush=True))
+            report)
         if result:
             return result
     return subprocess.call(command, env=environment, cwd=directory)
@@ -168,7 +267,7 @@ def gui(options):
     root.rowconfigure(10, weight=1)
     executable = tk.StringVar(value=options.executable or "")
     arguments = tk.StringVar(value=shlex.join(options.arguments))
-    prefix = tk.StringVar(value=options.prefix or "")
+    prefix = tk.StringVar(value=options.prefix or str(icarus_prefix()))
     proton = tk.StringVar(value=options.proton)
     gameid = tk.StringVar(value=options.gameid)
     profile = tk.StringVar(value=PROFILES[options.profile])
@@ -208,9 +307,9 @@ def gui(options):
     ttk.Button(root, text="Öffnen …", command=select_file).grid(row=0, column=2, padx=12)
     ttk.Button(root, text="Wählen …", command=lambda: select_folder(prefix)).grid(row=2, column=2)
     ttk.Button(root, text="Wählen …", command=lambda: select_folder(proton)).grid(row=3, column=2)
-    ttk.Label(root, text="GE-Proton = offizieller Download. Alternativ eigenen Build-Ordner wählen.\n"
-              "Leerer Programmordner: automatisch je Programmverzeichnis. Für Installer und\n"
-              "installierte Anwendung denselben eigenen Ordner wählen.").grid(
+    ttk.Label(root, text="Vorgabe: GE-Proton11-11 (SHA512-geprüfter Download bei Bedarf).\n"
+              "Icarus-Vorgabe: icarus-ge10-frisch; d3d9.floatEmulation = True.\n"
+              "Prefix vor einem Proton-Wechsel nur bei geschlossenem Spiel verwenden.").grid(
                   row=7, column=0, columnspan=3, sticky="w", padx=12, pady=8)
     status = tk.StringVar(value="Bereit. Beim ersten Start werden GE-Proton und die Laufzeit heruntergeladen.")
     ttk.Label(root, textvariable=status, wraplength=740).grid(
@@ -226,6 +325,9 @@ def gui(options):
 
     def worker(command, environment, directory, bootstrap):
         try:
+            report = lambda text: events.put(("log", text))
+            ensure_proton(environment, report)
+            backup_before_upgrade(environment, report)
             def run(child_command, child_environment, child_directory):
                 with subprocess.Popen(child_command, env=child_environment, cwd=child_directory,
                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -240,7 +342,7 @@ def gui(options):
                     events.put(("done", result))
                     return
             events.put(("done", run(command, environment, directory)))
-        except OSError as error:
+        except (OSError, ValueError, tarfile.TarError) as error:
             events.put(("error", str(error)))
 
     def start():
@@ -261,6 +363,8 @@ def gui(options):
         log(f"Programmordner: {environment['WINEPREFIX']}\n")
         profile_key = next(key for key, value in PROFILES.items() if value == profile.get())
         log(f"Profil: {PROFILES[selected_profile(executable.get(), profile_key)]}\n")
+        if environment.get("DXVK_CONFIG"):
+            log(f"DXVK_CONFIG: {environment['DXVK_CONFIG']}\n")
         if diagnostics.get():
             log(f"DXVK-Protokolle: {environment['DXVK_LOG_PATH']}\n")
         status.set("Wird gestartet. Der erste Download kann mehrere Minuten dauern.")
@@ -306,8 +410,8 @@ def main(argv=None):
     parser.add_argument("--version", action="version", version=f"GE-Wine {VERSION}")
     parser.add_argument("--gui", action="store_true", help="Grafische Oberfläche öffnen")
     parser.add_argument("--prefix", help="Gemeinsamer Programmordner für Installer und Anwendung")
-    parser.add_argument("--proton", default=os.environ.get("PROTONPATH", "GE-Proton"),
-                        help="GE-Proton für offiziellen Download oder Pfad zu eigenem Build")
+    parser.add_argument("--proton", default=PINNED_PROTON,
+                        help="Vorgabe GE-Proton11-11; alternativ GE-Proton für neueste Version oder Build-Ordner")
     parser.add_argument("--gameid", default=os.environ.get("GAMEID", "umu-default"))
     parser.add_argument("--profile", choices=PROFILES, default="auto")
     parser.add_argument("--no-prerequisites", action="store_true", help="Automatische VC++-Einrichtung überspringen")
@@ -319,7 +423,7 @@ def main(argv=None):
     options = parser.parse_args(argv)
     try:
         return gui(options) if options.gui or not options.executable else launch_cli(options)
-    except (ValueError, OSError) as error:
+    except (ValueError, OSError, tarfile.TarError) as error:
         print(f"GE-Wine: {error}", file=sys.stderr)
         return 1
 

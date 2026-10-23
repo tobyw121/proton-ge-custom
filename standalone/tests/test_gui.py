@@ -43,10 +43,10 @@ class GuiTests(unittest.TestCase):
 
         options = argparse.Namespace(executable=str(fixture.exe), arguments=["--test"],
                                      prefix=str(fixture.root / "prefix"),
-                                     proton="GE-Proton", gameid="umu-default",
+                                     proton=test_launcher.launcher.PINNED_PROTON, gameid="umu-default",
                                      profile="icarus-phoenix", diagnostics=True,
                                      nvidia_offload=False, low_latency=False,
                                      no_prerequisites=False)
-        with patch.dict(os.environ, {"PATH": str(fixture.root)}), patch("tkinter.Tk", factory):
+        with patch.dict(os.environ, {"PATH": str(fixture.root), "HOME": str(fixture.home)}), patch("tkinter.Tk", factory):
             self.assertEqual(test_launcher.launcher.gui(options), 0)
         self.assertEqual(results, [True])

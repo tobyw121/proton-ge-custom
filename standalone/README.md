@@ -7,7 +7,7 @@ Das Debian-Paket enthält die Oberfläche und einen privaten UMU-Backendstand
 (`e2b203a1fdd2af9f35166f5713cb3f85d72587e2`, Version 1.4.4).
 Eine separate Wine-, Steam- oder UMU-Installation ist nicht nötig.
 Python/Tk, die Python-Abhängigkeiten und Vulkan-Bibliotheken installiert APT.
-GE-Proton und Steam Linux Runtime werden erst beim Start durch UMU bezogen;
+GE-Proton und Steam Linux Runtime werden bei Bedarf beim ersten Start bezogen;
 Internet, ausreichend freier Speicher und passende Grafiktreiber sind erforderlich.
 Der erste Start kann länger dauern. Es handelt sich nicht um ein Offline-Paket.
 
@@ -36,8 +36,8 @@ Windows-/GPU-Tests sind darin nicht enthalten.
 ```sh
 bash standalone/build_deb.sh /tmp/ge-wine-dist
 cd /tmp/ge-wine-dist
-sha256sum -c ge-wine_0.3.0_amd64.deb.sha256
-sudo apt install ./ge-wine_0.3.0_amd64.deb
+sha256sum -c ge-wine_0.4.0_amd64.deb.sha256
+sudo apt install ./ge-wine_0.4.0_amd64.deb
 ```
 
 Anschließend im Anwendungsmenü **GE-Wine** öffnen oder:
@@ -68,8 +68,11 @@ Ohne Angabe wird je Verzeichnis der EXE ein eigener Prefix unter
 
 ## Version und Spiele-Fixes
 
-Standardmäßig lädt UMU mit `PROTONPATH=GE-Proton` die offizielle GE-Proton-Version
-herunter. Das ist **kein Quellcode-Build dieses Repositorys**. Beim Vergleich
+Seit 0.4.0 ist standardmäßig **GE-Proton11-11-x86_64** fest eingestellt.
+Der Download stammt aus dem offiziellen Release, wird vor dem Entpacken mit
+dessen SHA512-Datei geprüft und anschließend wiederverwendet. Mit
+`--proton GE-Proton` kann weiterhin ausdrücklich die jeweils neueste
+GE-Proton-Version über UMU gewählt werden. Das ist **kein Quellcode-Build dieses Repositorys**. Beim Vergleich
 des ursprünglichen Fork-Stands `88004a04` mit dem offiziellen GE-Proton gab es
 keine eigenen zusätzlichen Proton-Patches. Künftige eigene Builds lassen sich
 weiterhin über ihren entpackten Ordner auswählen:
@@ -110,11 +113,14 @@ ge-wine '/pfad/ICARUS_Phoenix/Launcher.exe'
 ge-wine --profile icarus-phoenix '/pfad/ICARUS_Phoenix/Launcher.exe'
 ```
 
-Das Profil legt je Spielinstallation einen eigenen Prefix an. Solange
-`Launcher.exe` im obersten Spielordner liegt, verwenden auch Programme unter
-`Bin64` und die mitgelieferten Visual-C++-Installer unter `Bin64/Redist`
-denselben Prefix. Einen solchen Installer bei Bedarf mit demselben Profil
-starten. Ein explizites `--prefix` hat immer Vorrang.
+Seit 0.4.0 verwendet das Icarus-Profil standardmäßig den vom Nutzer gewünschten
+Prefix `~/.local/share/ge-wine/prefixes/icarus-ge10-frisch`. Auf dem Rechner von
+`ssc` ergibt das `/home/ssc/.local/share/ge-wine/prefixes/icarus-ge10-frisch`.
+Die Oberfläche trägt diesen Pfad bereits ein. Der Ordnername bleibt auf Wunsch
+erhalten, auch wenn der Inhalt auf Proton 11 aktualisiert wird. Ein explizites
+`--prefix` hat Vorrang; mehrere Spielinstallationen müssen bei Bedarf getrennte
+Prefixe bekommen. Launcher, Spiel und Installer des Icarus-Profils verwenden
+standardmäßig denselben Prefix.
 
 ### Automatische Visual-C++-Einrichtung
 
@@ -200,3 +206,25 @@ Dieser Launcher benötigt den großen Build-SDK-Container nicht.
 Das Paket enthält UMU unter GPL-3.0; dessen vollständiger zugehöriger
 Quelltextstand liegt unter `/usr/share/doc/ge-wine/umu-source.tar.gz`.
 Weitere Lizenzhinweise stehen in den jeweiligen UMU-Quelldateien.
+
+## Aktuelle Icarus-Vorgaben ab 0.4.0
+
+- Prefix: `~/.local/share/ge-wine/prefixes/icarus-ge10-frisch`.
+- GE-Proton: `GE-Proton11-11-x86_64` aus
+  https://github.com/GloriousEggroll/proton-ge-custom/releases/download/GE-Proton11-11/GE-Proton11-11-x86_64.tar.gz
+- Im Icarus-Profil: `d3d9.floatEmulation = True` wird an `DXVK_CONFIG` angehängt.
+  Eine ausdrücklich im Prozess gesetzte `d3d9.floatEmulation`-Einstellung hat
+  Vorrang; andere DXVK-Einstellungen bleiben erhalten.
+
+Vor dem ersten Start mit Proton 11 Spiel und Launcher schließen. Wenn im
+Prefix eine ältere GE-Proton-Version eingetragen ist, erstellt GE-Wine vor
+der Aktualisierung eine Kopie unter `<prefix-parent>/.ge-wine-backups/`.
+Die Sicherung erhält Symlinks und ersetzt keine vorhandenen Dateien. Bei
+Download-, Prüfsummen-, Entpack- oder Sicherungsfehlern wird der Start abgebrochen.
+Ein bereits durch UMU oder manuell installierter vollständiger Ordner für
+GE-Proton11-11-x86_64 wird wiederverwendet.
+
+Die Sicherung und der Downloader sind mit Test-Archiven und Test-Prefixen
+geprüft. Zusätzlich wurden Download, SHA512-Prüfung und sichere Entpackung
+des echten offiziellen GE-Proton11-11-x86_64-Archivs in der Cloud ausgeführt. Diese Vorgaben entsprechen dem Nutzerwunsch und sind kein bestätigter
+Fix für den früheren Launcher-Absturz oder die CryEngine-Darstellungsfehler.

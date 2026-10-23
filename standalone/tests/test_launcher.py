@@ -20,6 +20,10 @@ class LauncherTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
+        self.home = self.root / "home"
+        installed = self.home / ".local/share/Steam/compatibilitytools.d" / launcher.PINNED_PROTON
+        installed.mkdir(parents=True)
+        (installed / "proton").write_text("test fixture\n")
         self.exe = self.root / "Spiel mit Leerzeichen;$(echo nein).exe"
         self.exe.touch()
         self.backend = self.root / "umu-run"
@@ -60,7 +64,7 @@ class LauncherTests(unittest.TestCase):
         self.assertEqual(record["args"], [str(self.exe), "--fullscreen",
                                          "argument mit leerzeichen", "$(touch nope)"])
         self.assertEqual(record["prefix"], str(prefix))
-        self.assertEqual(record["proton"], "GE-Proton")
+        self.assertEqual(record["proton"], str(self.home / ".local/share/Steam/compatibilitytools.d" / launcher.PINNED_PROTON))
         self.assertEqual(record["gameid"], "umu-test")
         self.assertEqual(record["cwd"], str(self.root))
 
@@ -115,7 +119,7 @@ class LauncherTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             records.append(json.loads(result.stdout))
         self.assertEqual(len({record["prefix"] for record in records}), 1)
-        self.assertIn("icarus-phoenix-", records[0]["prefix"])
+        self.assertTrue(records[0]["prefix"].endswith("/icarus-ge10-frisch"))
         self.assertEqual(records[2]["cwd"], str(game.parent))
 
     def test_diagnostics_create_logs_and_forward_nvidia_and_latency_settings(self):
@@ -136,11 +140,23 @@ class LauncherTests(unittest.TestCase):
                 os.environ, {"PROTON_USE_WINED3D": "1", "DXVK_CONFIG": "dxvk.numCompilerThreads = 4"}):
             environment = launcher.prepare(self.exe, [], profile="icarus-phoenix")[1]
             self.assertNotIn("PROTON_USE_WINED3D", environment)
-            self.assertEqual(environment["DXVK_CONFIG"], "dxvk.numCompilerThreads = 4")
+            self.assertEqual(environment["DXVK_CONFIG"], "dxvk.numCompilerThreads = 4; d3d9.floatEmulation = True")
             standard = launcher.prepare(self.exe, [])[1]
             self.assertEqual(standard["PROTON_USE_WINED3D"], "1")
             latency = launcher.prepare(self.exe, [], low_latency=True)[1]
             self.assertIn("dxvk.numCompilerThreads = 4; dxgi.maxFrameLatency = 1", latency["DXVK_CONFIG"])
+
+    def test_requested_defaults_and_explicit_overrides(self):
+        with patch.dict(os.environ, {"HOME": str(self.home)}, clear=False), patch("shutil.which", return_value=str(self.backend)):
+            environment = launcher.prepare(self.exe, [], profile="icarus-phoenix")[1]
+            self.assertEqual(environment["WINEPREFIX"], str(self.home / ".local/share/ge-wine/prefixes/icarus-ge10-frisch"))
+            self.assertIn("d3d9.floatEmulation = True", environment["DXVK_CONFIG"])
+            self.assertEqual(environment["PROTONPATH"], str(launcher.pinned_proton_directory()))
+            with patch.dict(os.environ, {"DXVK_CONFIG": "d3d9.floatEmulation = Strict"}):
+                custom = launcher.prepare(self.exe, [], prefix=self.root / "custom", proton="GE-Proton", profile="icarus-phoenix")[1]
+            self.assertEqual(custom["WINEPREFIX"], str(self.root / "custom"))
+            self.assertEqual(custom["PROTONPATH"], "GE-Proton")
+            self.assertEqual(custom["DXVK_CONFIG"], "d3d9.floatEmulation = Strict")
 
     def test_auto_profile_requires_icarus_layout_and_preserves_explicit_standard(self):
         game = self.root / "ICARUS_Phoenix"
