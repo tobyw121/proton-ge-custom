@@ -36,8 +36,8 @@ Windows-/GPU-Tests sind darin nicht enthalten.
 ```sh
 bash standalone/build_deb.sh /tmp/ge-wine-dist
 cd /tmp/ge-wine-dist
-sha256sum -c ge-wine_0.2.0_amd64.deb.sha256
-sudo apt install ./ge-wine_0.2.0_amd64.deb
+sha256sum -c ge-wine_0.3.0_amd64.deb.sha256
+sudo apt install ./ge-wine_0.3.0_amd64.deb
 ```
 
 Anschließend im Anwendungsmenü **GE-Wine** öffnen oder:
@@ -90,8 +90,12 @@ Sicherheitsisolierung.
 
 ## Icarus Phoenix: RTX 2070 und RTX 3060
 
-Version 0.2.0 ergänzt das Profil `icarus-phoenix` sowie den Menüeintrag
-**Icarus Phoenix (GE-Wine)**. Beide Grafikkarten verwenden dasselbe Paket.
+Das Profil `icarus-phoenix` und der Menüeintrag **Icarus Phoenix (GE-Wine)**
+sind für beide Grafikkarten identisch. Seit Version 0.3.0 ist die Standardauswahl
+**Automatisch erkennen**: Ein Ordner namens `ICARUS_Phoenix` (auch mit Leerzeichen
+oder Bindestrich) mit `Launcher.exe` und einem Verzeichnis `Bin64` wird erkannt.
+Ein anderer Installationsordner lässt sich ausdrücklich über das Profil auswählen.
+`--profile standard` deaktiviert die Erkennung.
 Dies ist ein Start- und Diagnoseprofil, kein gemessener Performance-Patch
 und keine neu kompilierte Proton-Version. Ein aktueller, zur DXVK-Version
 passender NVIDIA-Vulkan-Treiber muss auf dem Rechner installiert sein.
@@ -101,6 +105,8 @@ beziehen und entpacken. Die Seite nennt etwa 30 GB freien Speicher und den
 Start über `Launcher.exe` **im ursprünglichen Spielordner**:
 
 ```sh
+ge-wine '/pfad/ICARUS_Phoenix/Launcher.exe'
+# Alternativ ausdrücklich auswählen:
 ge-wine --profile icarus-phoenix '/pfad/ICARUS_Phoenix/Launcher.exe'
 ```
 
@@ -109,6 +115,40 @@ Das Profil legt je Spielinstallation einen eigenen Prefix an. Solange
 `Bin64` und die mitgelieferten Visual-C++-Installer unter `Bin64/Redist`
 denselben Prefix. Einen solchen Installer bei Bedarf mit demselben Profil
 starten. Ein explizites `--prefix` hat immer Vorrang.
+
+### Automatische Visual-C++-Einrichtung
+
+Vor dem Spiel-/Launcher-Start im Icarus-Profil richtet GE-Wine die Winetricks-
+Pakete `vcrun2008`, `vcrun2010`, `vcrun2012`, `vcrun2013` und `vcrun2015` im
+gewählten Prefix ein. Dabei wird die private UMU-Schnittstelle
+`umu-run winetricks <paket>` verwendet; UMU startet Winetricks mit `-q`.
+Es wird kein System-Wine installiert. Microsoft-Installer werden durch
+Winetricks heruntergeladen und mit dessen normalen Prüfsummenprüfungen verwendet.
+Eine Internetverbindung ist bei der Ersteinrichtung erforderlich.
+
+Die bestätigten Einträge in `<prefix>/winetricks.log` bestimmen, welche Pakete
+noch fehlen. Eine vorhandene `vcrun2017`-, `vcrun2019`- oder `vcrun2022`-
+Installation erfüllt die VC++-2015/14-Anforderung und wird nicht heruntergestuft.
+Eine Sperre je Prefix verhindert parallele Ersteinrichtungen durch GE-Wine.
+Ein Fehler oder fehlender Installationseintrag stoppt den Launcher-Start;
+beim nächsten Versuch werden nur die noch fehlenden Pakete erneut versucht.
+Manuell ausgeführte Installer unter `Redist` lösen keine zusätzliche automatische
+Einrichtung aus.
+
+Zum Überspringen dient der Haken **Icarus: VC++ 2008–2015 automatisch einrichten**
+oder beispielsweise:
+
+```sh
+ge-wine --no-prerequisites --profile icarus-phoenix '/pfad/ICARUS_Phoenix/Launcher.exe'
+```
+
+Einen bestehenden Prefix nicht zwischen GE-Proton 11 und 10 herabstufen.
+Für Versionsvergleiche jeweils einen eigenen leeren Prefix wählen.
+Die VC++-Einrichtung ist kein bestätigter Fix für den zuvor beobachteten
+Stacküberlauf des Launchers. Der Launcher bringt selbst .NET Core 3.1.32 mit;
+VC++-Pakete ersetzen diese Laufzeit nicht. Die Setup-Steuerung wird mit einem
+Test-Backend geprüft; die Microsoft-Installer und der Phoenix-Start müssen
+noch auf dem Zielrechner geprüft werden.
 
 GE-Proton übernimmt DX9/DX11 über DXVK. Das Profil entfernt eine geerbte
 `PROTON_USE_WINED3D`-Einstellung, damit nicht versehentlich der OpenGL-Pfad

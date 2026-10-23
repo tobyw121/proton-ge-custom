@@ -62,12 +62,12 @@ StartupNotify=false
 EOF
 cat > "$stage/DEBIAN/control" <<'EOF'
 Package: ge-wine
-Version: 0.2.0
+Version: 0.3.0
 Architecture: amd64
 Maintainer: GE-Wine contributors <ge-wine@example.invalid>
 Section: utils
 Priority: optional
-Depends: python3 (>= 3.12), python3-tk, python3-xlib, python3-urllib3 (>= 2.0), python3-truststore, ca-certificates, xz-utils, tar, libvulkan1
+Depends: python3 (>= 3.12), python3-tk, python3-xlib, python3-urllib3 (>= 2.0), python3-truststore, ca-certificates, xz-utils, tar, libvulkan1, cabextract, unzip, wget
 Description: Desktop and command-line frontend for GE-Proton through UMU
  Includes a private UMU backend. GE-Proton and the Steam Linux Runtime
  are downloaded on first launch. A separate Wine installation is not needed.
@@ -75,6 +75,6 @@ EOF
 find "$stage" -type d -exec chmod 755 {} +
 find "$stage" -type f -exec chmod 644 {} +
 chmod 755 "$stage/usr/bin/ge-wine"
-dpkg-deb --root-owner-group --build "$stage" "$output_dir/ge-wine_0.2.0_amd64.deb"
-(cd "$output_dir" && sha256sum ge-wine_0.2.0_amd64.deb > ge-wine_0.2.0_amd64.deb.sha256)
-printf 'Package: %s/ge-wine_0.2.0_amd64.deb\n' "$output_dir"
+dpkg-deb --root-owner-group --build "$stage" "$output_dir/ge-wine_0.3.0_amd64.deb"
+(cd "$output_dir" && sha256sum ge-wine_0.3.0_amd64.deb > ge-wine_0.3.0_amd64.deb.sha256)
+printf 'Package: %s/ge-wine_0.3.0_amd64.deb\n' "$output_dir"

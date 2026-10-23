@@ -26,6 +26,16 @@ class LauncherTests(unittest.TestCase):
         self.backend.write_text(
             f"#!{sys.executable}\n"
             "import json, os, sys\n"
+            "from pathlib import Path\n"
+            "if os.environ.get('TEST_CALL_LOG'):\n"
+            "    with open(os.environ['TEST_CALL_LOG'], 'a') as log: log.write(json.dumps(sys.argv[1:])+'\\n')\n"
+            "if sys.argv[1:2] == ['winetricks']:\n"
+            "    verb=sys.argv[2]\n"
+            "    if verb==os.environ.get('TEST_FAIL_VERB'): sys.exit(23)\n"
+            "    prefix=Path(os.environ['WINEPREFIX']); prefix.mkdir(parents=True,exist_ok=True)\n"
+            "    if not os.environ.get('TEST_NO_RECORD'):\n"
+            "        with (prefix/'winetricks.log').open('a') as log: log.write(verb+'\\n')\n"
+            "    sys.exit(0)\n"
             "print(json.dumps({'args':sys.argv[1:], 'prefix':os.environ['WINEPREFIX'],"
             "'proton':os.environ['PROTONPATH'], 'gameid':os.environ['GAMEID'], 'cwd':os.getcwd(),"
             "'graphics':{k:os.environ[k] for k in ('DXVK_HUD','DXVK_LOG_PATH','DXVK_CONFIG',"
@@ -34,7 +44,8 @@ class LauncherTests(unittest.TestCase):
         self.backend.chmod(0o755)
 
     def run_cli(self, *args, exit_code="0"):
-        environment = dict(os.environ, PATH=str(self.root), TEST_EXIT=exit_code)
+        environment = dict(os.environ, PATH=str(self.root), TEST_EXIT=exit_code,
+                           HOME=str(self.root / "home"))
         environment.pop("PROTONPATH", None)
         environment.pop("GAMEID", None)
         return subprocess.run([sys.executable, str(SOURCE), *map(str, args)],
@@ -130,6 +141,77 @@ class LauncherTests(unittest.TestCase):
             self.assertEqual(standard["PROTON_USE_WINED3D"], "1")
             latency = launcher.prepare(self.exe, [], low_latency=True)[1]
             self.assertIn("dxvk.numCompilerThreads = 4; dxgi.maxFrameLatency = 1", latency["DXVK_CONFIG"])
+
+    def test_auto_profile_requires_icarus_layout_and_preserves_explicit_standard(self):
+        game = self.root / "ICARUS_Phoenix"
+        (game / "Bin64").mkdir(parents=True)
+        exe = game / "Launcher.exe"
+        exe.touch()
+        self.assertEqual(launcher.selected_profile(exe, "auto"), "icarus-phoenix")
+        self.assertEqual(launcher.selected_profile(exe, "standard"), "standard")
+        self.assertEqual(launcher.selected_profile(self.exe, "auto"), "standard")
+        self.assertFalse(launcher.needs_prerequisites(game / "Bin64/Redist/setup.exe", "auto", True))
+
+    def test_default_cli_detects_icarus_and_standard_can_bypass_setup(self):
+        game = self.root / "ICARUS_Phoenix"
+        (game / "Bin64").mkdir(parents=True)
+        exe = game / "Launcher.exe"
+        exe.touch()
+        prefix = self.root / "automatic-prefix"
+        result = self.run_cli("--prefix", prefix, exe)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(launcher.installed_verbs(prefix), set(launcher.VC_VERBS))
+        plain = self.root / "standard-prefix"
+        result = self.run_cli("--profile", "standard", "--prefix", plain, exe)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((plain / "winetricks.log").exists())
+
+    def test_vc_setup_is_once_per_prefix_and_precedes_game(self):
+        prefix = self.root / "prefix"
+        calls = self.root / "calls.jsonl"
+        arguments = ("--profile", "icarus-phoenix", "--prefix", prefix, self.exe)
+        with patch.dict(os.environ, {"TEST_CALL_LOG": str(calls)}):
+            for _ in range(2):
+                result = self.run_cli(*arguments)
+                self.assertEqual(result.returncode, 0, result.stderr)
+        records = [json.loads(line) for line in calls.read_text().splitlines()]
+        self.assertEqual(records[:5], [["winetricks", verb] for verb in launcher.VC_VERBS])
+        self.assertEqual(records[5:], [[str(self.exe)], [str(self.exe)]])
+
+    def test_failed_vc_setup_stops_game_and_retry_resumes_missing_verbs(self):
+        prefix = self.root / "prefix"
+        calls = self.root / "calls.jsonl"
+        arguments = ("--profile", "icarus-phoenix", "--prefix", prefix, self.exe)
+        with patch.dict(os.environ, {"TEST_CALL_LOG": str(calls), "TEST_FAIL_VERB": "vcrun2012"}):
+            result = self.run_cli(*arguments)
+        self.assertEqual(result.returncode, 23)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(launcher.installed_verbs(prefix), {"vcrun2008", "vcrun2010"})
+        with patch.dict(os.environ, {"TEST_CALL_LOG": str(calls)}):
+            result = self.run_cli(*arguments)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        records = [json.loads(line) for line in calls.read_text().splitlines()]
+        self.assertEqual(records[3], ["winetricks", "vcrun2012"])
+        self.assertEqual(records[-1], [str(self.exe)])
+
+    def test_zero_exit_without_install_record_is_not_success(self):
+        with patch.dict(os.environ, {"TEST_NO_RECORD": "1"}):
+            result = self.run_cli("--profile", "icarus-phoenix", "--prefix", self.root / "prefix", self.exe)
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("nicht bestätigt", result.stderr)
+
+    def test_skip_switch_does_not_install_and_newer_vc14_is_preserved(self):
+        prefix = self.root / "prefix"
+        result = self.run_cli("--profile", "icarus-phoenix", "--no-prerequisites", "--prefix", prefix, self.exe)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((prefix / "winetricks.log").exists())
+        prefix.mkdir()
+        (prefix / "winetricks.log").write_text("vcrun2022\n")
+        result = self.run_cli("--profile", "icarus-phoenix", "--prefix", prefix, self.exe)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("vcrun2015", launcher.installed_verbs(prefix))
+        self.assertIn("vcrun2022", launcher.installed_verbs(prefix))
 
 
 if __name__ == "__main__":
