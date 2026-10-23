@@ -19,7 +19,7 @@ import threading
 from urllib.request import urlopen
 
 
-VERSION = "0.4.0"
+VERSION = "0.4.1"
 PINNED_PROTON = "GE-Proton11-11-x86_64"
 PROTON_URL = ("https://github.com/GloriousEggroll/proton-ge-custom/releases/download/"
               "GE-Proton11-11/GE-Proton11-11-x86_64.tar.gz")
@@ -215,6 +215,10 @@ def prepare(executable, arguments, prefix=None, proton=PINNED_PROTON, gameid="um
     if diagnostics:
         environment["DXVK_HUD"] = "devinfo,api,fps,frametimes,compiler"
         environment["DXVK_LOG_PATH"] = str(prefix.parent / (prefix.name + "-logs"))
+        # Proton otherwise defaults DXVK_LOG_LEVEL to 'none', even with a log path.
+        environment["DXVK_LOG_LEVEL"] = "info"
+        environment["PROTON_LOG"] = "1"
+        environment["PROTON_LOG_DIR"] = environment["DXVK_LOG_PATH"]
     bundled = Path(__file__).resolve().parent / "backend" / "umu"
     if bundled.is_dir():
         # Invoke a private backend without changing the user's umu-run or wine commands.
@@ -288,7 +292,7 @@ def gui(options):
         row=5, column=1, columnspan=2, sticky="ew", padx=(0, 12))
     settings = ttk.Frame(root)
     settings.grid(row=6, column=0, columnspan=3, sticky="w", padx=12, pady=8)
-    ttk.Checkbutton(settings, text="Diagnose: GPU, DX-Version, FPS", variable=diagnostics).pack(anchor="w")
+    ttk.Checkbutton(settings, text="Diagnose: GPU/FPS und Proton-/DXVK-Logdateien", variable=diagnostics).pack(anchor="w")
     ttk.Checkbutton(settings, text="NVIDIA-GPU erzwingen (Hybrid-Laptop)", variable=nvidia_offload).pack(anchor="w")
     ttk.Checkbutton(settings, text="Kürzere Render-Warteschlange (experimentell)", variable=low_latency).pack(anchor="w")
     ttk.Checkbutton(settings, text="Icarus: VC++ 2008–2015 automatisch einrichten", variable=prerequisites).pack(anchor="w")
@@ -366,7 +370,7 @@ def gui(options):
         if environment.get("DXVK_CONFIG"):
             log(f"DXVK_CONFIG: {environment['DXVK_CONFIG']}\n")
         if diagnostics.get():
-            log(f"DXVK-Protokolle: {environment['DXVK_LOG_PATH']}\n")
+            log(f"Proton-/DXVK-Protokolle: {environment['DXVK_LOG_PATH']}\n")
         status.set("Wird gestartet. Der erste Download kann mehrere Minuten dauern.")
         bootstrap = needs_prerequisites(executable.get(), profile_key, prerequisites.get())
         threading.Thread(target=worker, args=(command, environment, directory, bootstrap), daemon=True).start()
@@ -415,7 +419,7 @@ def main(argv=None):
     parser.add_argument("--gameid", default=os.environ.get("GAMEID", "umu-default"))
     parser.add_argument("--profile", choices=PROFILES, default="auto")
     parser.add_argument("--no-prerequisites", action="store_true", help="Automatische VC++-Einrichtung überspringen")
-    parser.add_argument("--diagnostics", action="store_true", help="DXVK-HUD und Protokolle aktivieren")
+    parser.add_argument("--diagnostics", action="store_true", help="DXVK-HUD sowie Proton- und DXVK-Dateilogs aktivieren")
     parser.add_argument("--nvidia-offload", action="store_true", help="NVIDIA-GPU auf Hybrid-Systemen wählen")
     parser.add_argument("--low-latency", action="store_true", help="Experimentell: maximal ein Frame in der Warteschlange")
     parser.add_argument("executable", nargs="?")

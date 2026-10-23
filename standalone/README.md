@@ -36,8 +36,8 @@ Windows-/GPU-Tests sind darin nicht enthalten.
 ```sh
 bash standalone/build_deb.sh /tmp/ge-wine-dist
 cd /tmp/ge-wine-dist
-sha256sum -c ge-wine_0.4.0_amd64.deb.sha256
-sudo apt install ./ge-wine_0.4.0_amd64.deb
+sha256sum -c ge-wine_0.4.1_amd64.deb.sha256
+sudo apt install ./ge-wine_0.4.1_amd64.deb
 ```
 
 Anschließend im Anwendungsmenü **GE-Wine** öffnen oder:
@@ -169,8 +169,12 @@ ge-wine --profile icarus-phoenix --diagnostics '/pfad/ICARUS_Phoenix/Launcher.ex
 ```
 
 Das DXVK-HUD zeigt GPU, Direct3D-Modus, FPS, Framezeiten und Shader-Compiler-
-Aktivität. DXVK-Protokolle liegen neben dem Prefix in einem Ordner mit
-Endung `-logs`. Bei einem Hybrid-Laptop zusätzlich `--nvidia-offload`
+Aktivität. Seit 0.4.1 werden außerdem `DXVK_LOG_LEVEL=info`, `PROTON_LOG=1`
+und `PROTON_LOG_DIR` gesetzt. Proton- und DXVK-Protokolle liegen gemeinsam
+neben dem Prefix in einem Ordner mit Endung `-logs`. `steam-default.log`
+entsteht beim Proton-Start; `*_d3d9.log` bzw. `*_d3d11.log` entstehen erst,
+wenn ein Prozess die jeweilige Grafikbibliothek initialisiert. Ein leerer
+DXVK-Ordner beweist daher nicht, dass das Spiel erfolgreich gestartet ist. Bei einem Hybrid-Laptop zusätzlich `--nvidia-offload`
 verwenden bzw. den entsprechenden Haken in der Oberfläche setzen. Auf einem
 Desktop mit nur einer GPU ist das normalerweise nicht nötig.
 

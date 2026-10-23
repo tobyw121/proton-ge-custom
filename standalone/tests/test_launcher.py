@@ -42,7 +42,7 @@ class LauncherTests(unittest.TestCase):
             "    sys.exit(0)\n"
             "print(json.dumps({'args':sys.argv[1:], 'prefix':os.environ['WINEPREFIX'],"
             "'proton':os.environ['PROTONPATH'], 'gameid':os.environ['GAMEID'], 'cwd':os.getcwd(),"
-            "'graphics':{k:os.environ[k] for k in ('DXVK_HUD','DXVK_LOG_PATH','DXVK_CONFIG',"
+            "'graphics':{k:os.environ[k] for k in ('DXVK_HUD','DXVK_LOG_PATH','DXVK_LOG_LEVEL','PROTON_LOG','PROTON_LOG_DIR','DXVK_CONFIG',"
             "'__NV_PRIME_RENDER_OFFLOAD','__VK_LAYER_NV_optimus','PROTON_USE_WINED3D') if k in os.environ}}))\n"
             "sys.exit(int(os.environ.get('TEST_EXIT', '0')))\n")
         self.backend.chmod(0o755)
@@ -130,6 +130,9 @@ class LauncherTests(unittest.TestCase):
         graphics = json.loads(result.stdout)["graphics"]
         self.assertIn("api", graphics["DXVK_HUD"].split(","))
         self.assertTrue(Path(graphics["DXVK_LOG_PATH"]).is_dir())
+        self.assertEqual(graphics["DXVK_LOG_LEVEL"], "info")
+        self.assertEqual(graphics["PROTON_LOG"], "1")
+        self.assertEqual(graphics["PROTON_LOG_DIR"], graphics["DXVK_LOG_PATH"])
         self.assertEqual(graphics["__NV_PRIME_RENDER_OFFLOAD"], "1")
         self.assertEqual(graphics["__VK_LAYER_NV_optimus"], "NVIDIA_only")
         self.assertIn("dxgi.maxFrameLatency = 1", graphics["DXVK_CONFIG"])

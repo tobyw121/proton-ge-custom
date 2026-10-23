@@ -42,13 +42,13 @@ jobs:
       - name: Build Debian package and source archive
         run: |
           bash standalone/build_deb.sh "$DIST_DIR"
-          tar --exclude=__pycache__ -czf "$DIST_DIR/ge-wine-0.4.0-source.tar.gz" standalone
+          tar --exclude=__pycache__ -czf "$DIST_DIR/ge-wine-0.4.1-source.tar.gz" standalone
 
       - name: Verify and install package
         run: |
           cd "$DIST_DIR"
-          sha256sum -c ge-wine_0.4.0_amd64.deb.sha256
-          sudo apt-get install -y ./ge-wine_0.4.0_amd64.deb
+          sha256sum -c ge-wine_0.4.1_amd64.deb.sha256
+          sudo apt-get install -y ./ge-wine_0.4.1_amd64.deb
           ge-wine --version
           PYTHONPATH=/usr/lib/ge-wine/backend /usr/bin/python3 -m umu --version
           desktop-file-validate /usr/share/applications/ge-wine.desktop
@@ -70,7 +70,7 @@ jobs:
           cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
           ## GE-Wine for Linux Mint 22 / Ubuntu 24.04 (amd64)
           Download and extract the `ge-wine-mint22-ubuntu24.04-amd64` artifact.
-          Install with `sudo apt install ./ge-wine_0.4.0_amd64.deb`.
+          Install with `sudo apt install ./ge-wine_0.4.1_amd64.deb`.
           Launch GE-Wine from the application menu or run `ge-wine program.exe`.
 
           The package includes the GUI, CLI and private UMU backend.
