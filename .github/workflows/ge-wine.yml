@@ -1,0 +1,78 @@
+name: GE-Wine Debian package
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'standalone/**'
+      - '.github/workflows/ge-wine.yml'
+  pull_request:
+    paths:
+      - 'standalone/**'
+      - '.github/workflows/ge-wine.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: Build and test for Mint 22 / Ubuntu 24.04
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      DIST_DIR: ${{ github.workspace }}/dist/ge-wine
+    steps:
+      - name: Check out application sources
+        uses: actions/checkout@v6
+        with:
+          submodules: false
+          persist-credentials: false
+
+      - name: Install test and package dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            python3 python3-tk python3-xlib python3-urllib3 python3-truststore \
+            ca-certificates git dpkg-dev xz-utils tar libvulkan1 \
+            xvfb xauth desktop-file-utils
+
+      - name: Test CLI and graphical interface
+        run: xvfb-run -a /usr/bin/python3 -m unittest discover -s standalone/tests -v
+
+      - name: Build Debian package and source archive
+        run: |
+          bash standalone/build_deb.sh "$DIST_DIR"
+          tar --exclude=__pycache__ -czf "$DIST_DIR/ge-wine-0.1.0-source.tar.gz" standalone
+
+      - name: Verify and install package
+        run: |
+          cd "$DIST_DIR"
+          sha256sum -c ge-wine_0.1.0_amd64.deb.sha256
+          sudo apt-get install -y ./ge-wine_0.1.0_amd64.deb
+          ge-wine --version
+          PYTHONPATH=/usr/lib/ge-wine/backend /usr/bin/python3 -m umu --version
+          desktop-file-validate /usr/share/applications/ge-wine.desktop
+
+      - name: Upload installable package
+        uses: actions/upload-artifact@v5
+        with:
+          name: ge-wine-mint22-ubuntu24.04-amd64
+          path: |
+            ${{ env.DIST_DIR }}/*.deb
+            ${{ env.DIST_DIR }}/*.sha256
+            ${{ env.DIST_DIR }}/*-source.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Build summary
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
+          ## GE-Wine for Linux Mint 22 / Ubuntu 24.04 (amd64)
+          Download and extract the `ge-wine-mint22-ubuntu24.04-amd64` artifact.
+          Install with `sudo apt install ./ge-wine_0.1.0_amd64.deb`.
+          Launch GE-Wine from the application menu or run `ge-wine program.exe`.
+
+          The package includes the GUI, CLI and private UMU backend.
+          Official GE-Proton and its runtime download on first launch.
+          This job does not compile this repository's Proton fork or test Windows/GPU compatibility.
+          EOF
