@@ -180,7 +180,7 @@ class LauncherTests(unittest.TestCase):
         prefix = self.root / "automatic-prefix"
         result = self.run_cli("--prefix", prefix, exe)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(launcher.installed_verbs(prefix), set(launcher.VC_VERBS))
+        self.assertEqual(launcher.installed_verbs(prefix), set(launcher.ICARUS_VERBS))
         plain = self.root / "standard-prefix"
         result = self.run_cli("--profile", "standard", "--prefix", plain, exe)
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -195,8 +195,29 @@ class LauncherTests(unittest.TestCase):
                 result = self.run_cli(*arguments)
                 self.assertEqual(result.returncode, 0, result.stderr)
         records = [json.loads(line) for line in calls.read_text().splitlines()]
-        self.assertEqual(records[:5], [["winetricks", verb] for verb in launcher.VC_VERBS])
-        self.assertEqual(records[5:], [[str(self.exe)], [str(self.exe)]])
+        self.assertEqual(records[:len(launcher.ICARUS_VERBS)], [["winetricks", verb] for verb in launcher.ICARUS_VERBS])
+        self.assertEqual(records[len(launcher.ICARUS_VERBS):], [[str(self.exe)], [str(self.exe)]])
+
+    def test_existing_vc_prefix_gets_shader_compiler_once_and_failure_blocks_game(self):
+        prefix = self.root / "prefix"
+        prefix.mkdir()
+        (prefix / "winetricks.log").write_text(
+            "vcrun2008\nvcrun2010\nvcrun2012\nvcrun2013\nvcrun2015\n")
+        calls = self.root / "calls.jsonl"
+        arguments = ("--profile", "icarus-phoenix", "--prefix", prefix, self.exe)
+        with patch.dict(os.environ, {"TEST_CALL_LOG": str(calls), "TEST_FAIL_VERB": "d3dcompiler_43"}):
+            result = self.run_cli(*arguments)
+        self.assertEqual(result.returncode, 23)
+        self.assertEqual(result.stdout, "")
+        self.assertNotIn("d3dcompiler_43", launcher.installed_verbs(prefix))
+        with patch.dict(os.environ, {"TEST_CALL_LOG": str(calls)}):
+            for _ in range(2):
+                result = self.run_cli(*arguments)
+                self.assertEqual(result.returncode, 0, result.stderr)
+        records = [json.loads(line) for line in calls.read_text().splitlines()]
+        self.assertEqual(records, [["winetricks", "d3dcompiler_43"],
+                                   ["winetricks", "d3dcompiler_43"],
+                                   [str(self.exe)], [str(self.exe)]])
 
     def test_failed_vc_setup_stops_game_and_retry_resumes_missing_verbs(self):
         prefix = self.root / "prefix"

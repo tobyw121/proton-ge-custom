@@ -19,13 +19,14 @@ import threading
 from urllib.request import urlopen
 
 
-VERSION = "0.4.2"
+VERSION = "0.4.3"
 PINNED_PROTON = "GE-Proton10-34"
 PROTON_URL = ("https://github.com/GloriousEggroll/proton-ge-custom/releases/download/"
               "GE-Proton10-34/GE-Proton10-34.tar.gz")
 PROFILES = {"auto": "Automatisch erkennen", "standard": "Standard",
             "icarus-phoenix": "Icarus Phoenix – RTX 2070 / 3060"}
-VC_VERBS = ("vcrun2008", "vcrun2010", "vcrun2012", "vcrun2013", "vcrun2015")
+ICARUS_VERBS = ("vcrun2008", "vcrun2010", "vcrun2012", "vcrun2013", "vcrun2015",
+                "d3dcompiler_43")
 
 
 def pinned_proton_directory():
@@ -148,10 +149,10 @@ def install_prerequisites(command, environment, directory, run, report):
     lock_directory.mkdir(parents=True, exist_ok=True)
     lock_name = hashlib.sha256(os.fsencode(prefix)).hexdigest() + ".lock"
     backend = command[:3] if command[1:3] == ["-m", "umu"] else command[:1]
-    report("Prüfe Visual C++ 2008–2015 im Programmordner …\n")
+    report("Prüfe Visual C++ 2008–2015 und Shader-Compiler 43 im Programmordner …\n")
     with (lock_directory / lock_name).open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
-        for verb in VC_VERBS:
+        for verb in ICARUS_VERBS:
             installed = installed_verbs(prefix)
             if verb in installed:
                 continue
@@ -167,7 +168,7 @@ def install_prerequisites(command, environment, directory, run, report):
             if verb not in installed_verbs(prefix):
                 report(f"Installation von {verb} nicht bestätigt; Launcher nicht gestartet.\n")
                 return 1
-    report("VC++-Laufzeiten sind eingerichtet.\n")
+    report("VC++-Laufzeiten und Shader-Compiler 43 sind eingerichtet.\n")
     return 0
 
 
@@ -292,7 +293,7 @@ def gui(options):
     ttk.Checkbutton(settings, text="Diagnose: GPU/FPS und Proton-/DXVK-Logdateien", variable=diagnostics).pack(anchor="w")
     ttk.Checkbutton(settings, text="NVIDIA-GPU erzwingen (Hybrid-Laptop)", variable=nvidia_offload).pack(anchor="w")
     ttk.Checkbutton(settings, text="Kürzere Render-Warteschlange (experimentell)", variable=low_latency).pack(anchor="w")
-    ttk.Checkbutton(settings, text="Icarus: VC++ 2008–2015 automatisch einrichten", variable=prerequisites).pack(anchor="w")
+    ttk.Checkbutton(settings, text="Icarus: VC++ und Shader-Compiler automatisch einrichten", variable=prerequisites).pack(anchor="w")
 
     def select_file():
         selected = filedialog.askopenfilename(filetypes=[("Windows-Programme", "*.exe"),
@@ -415,7 +416,7 @@ def main(argv=None):
                         help="Vorgabe GE-Proton10-34; alternativ GE-Proton für neueste Version oder Build-Ordner")
     parser.add_argument("--gameid", default=os.environ.get("GAMEID", "umu-default"))
     parser.add_argument("--profile", choices=PROFILES, default="auto")
-    parser.add_argument("--no-prerequisites", action="store_true", help="Automatische VC++-Einrichtung überspringen")
+    parser.add_argument("--no-prerequisites", action="store_true", help="Automatische Icarus-Laufzeit- und Shader-Compiler-Einrichtung überspringen")
     parser.add_argument("--diagnostics", action="store_true", help="DXVK-HUD sowie Proton- und DXVK-Dateilogs aktivieren")
     parser.add_argument("--nvidia-offload", action="store_true", help="NVIDIA-GPU auf Hybrid-Systemen wählen")
     parser.add_argument("--low-latency", action="store_true", help="Experimentell: maximal ein Frame in der Warteschlange")

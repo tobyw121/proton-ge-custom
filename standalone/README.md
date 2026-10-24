@@ -36,8 +36,8 @@ Windows-/GPU-Tests sind darin nicht enthalten.
 ```sh
 bash standalone/build_deb.sh /tmp/ge-wine-dist
 cd /tmp/ge-wine-dist
-sha256sum -c ge-wine_0.4.2_amd64.deb.sha256
-sudo apt install ./ge-wine_0.4.2_amd64.deb
+sha256sum -c ge-wine_0.4.3_amd64.deb.sha256
+sudo apt install ./ge-wine_0.4.3_amd64.deb
 ```
 
 Anschließend im Anwendungsmenü **GE-Wine** öffnen oder:
@@ -122,11 +122,12 @@ Ein explizites `--prefix` hat Vorrang; mehrere Spielinstallationen müssen bei B
 Prefixe bekommen. Launcher, Spiel und Installer des Icarus-Profils verwenden
 standardmäßig denselben Prefix.
 
-### Automatische Visual-C++-Einrichtung
+### Automatische Visual-C++- und Shader-Compiler-Einrichtung
 
 Vor dem Spiel-/Launcher-Start im Icarus-Profil richtet GE-Wine die Winetricks-
 Pakete `vcrun2008`, `vcrun2010`, `vcrun2012`, `vcrun2013` und `vcrun2015` im
-gewählten Prefix ein. Dabei wird die private UMU-Schnittstelle
+gewählten Prefix ein. Ab 0.4.3 kommt `d3dcompiler_43` hinzu: Winetricks installiert
+Microsofts Shader-Compiler und setzt dessen native DLL-Übersteuerung. Dabei wird die private UMU-Schnittstelle
 `umu-run winetricks <paket>` verwendet; UMU startet Winetricks mit `-q`.
 Es wird kein System-Wine installiert. Microsoft-Installer werden durch
 Winetricks heruntergeladen und mit dessen normalen Prüfsummenprüfungen verwendet.
@@ -141,7 +142,7 @@ beim nächsten Versuch werden nur die noch fehlenden Pakete erneut versucht.
 Manuell ausgeführte Installer unter `Redist` lösen keine zusätzliche automatische
 Einrichtung aus.
 
-Zum Überspringen dient der Haken **Icarus: VC++ 2008–2015 automatisch einrichten**
+Zum Überspringen dient der Haken **Icarus: VC++ und Shader-Compiler automatisch einrichten**
 oder beispielsweise:
 
 ```sh
@@ -241,3 +242,21 @@ neben dem alten Prefix unter `.ge-wine-backups/`. Diese wird nicht automatisch
 zurückgespielt. Vor einem Wechsel der GE-Proton-Hauptversion im voreingestellten
 Build erstellt GE-Wine eine weitere Prefix-Kopie, ohne vorhandene Dateien zu
 ersetzen. Das ersetzt keine saubere Trennung der Prefixe beim Versionsvergleich.
+
+## Shader-Korrektur ab 0.4.3
+
+Im Icarus-Profil wird der Microsoft-Shader-Compiler `d3dcompiler_43` vor dem
+Spielstart automatisch über denselben UMU-/Proton-Build im gewählten Prefix
+eingerichtet. Der Nutzer hat bestätigt, dass dessen manuelle Installation die
+Darstellungsprobleme auf seinem Setup behebt. Zuvor meldete Wines eingebauter
+Compiler wiederholt `E5001: Modifiers are not allowed on casts`.
+
+Bestehende Prefixe bekommen nur das fehlende Paket; bestätigte Installationen
+werden nicht erneut ausgeführt. Bereits manuell installiertes `d3dcompiler_43`
+wird anhand des Winetricks-Protokolls erkannt. Die Einstellung gilt nur für das
+Icarus-Profil (auch bei automatischer Erkennung); `--no-prerequisites` schaltet
+auch diese Installation ab. Proton10-34 und der bisherige Prefix-Pfad bleiben
+erhalten. Es gibt keine Änderung an den Spieldateien und keinen neuen Proton-Build.
+
+Die Steuerung ist automatisiert mit einem Test-Backend geprüft. Ein neuer
+Spieltest der automatischen Installation auf dem Zielrechner steht noch aus.
