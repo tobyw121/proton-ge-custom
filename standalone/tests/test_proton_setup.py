@@ -64,25 +64,3 @@ class ProtonSetupTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             launcher.ensure_proton(self.environment, lambda text: None)
         self.assertEqual((target / "user-file").read_text(), "keep")
-
-    def test_backup_before_major_change_keeps_original_files_and_symlinks(self):
-        prefix = Path(self.environment["WINEPREFIX"])
-        prefix.mkdir(parents=True)
-        (prefix / "version").write_text("GE-Proton11-11")
-        (prefix / "savegame").write_text("keep my game")
-        (prefix / "pfx").symlink_to(".")
-        launcher.backup_before_upgrade(self.environment, lambda text: None)
-        backups = list((prefix.parent / ".ge-wine-backups").iterdir())
-        self.assertEqual(len(backups), 1)
-        self.assertEqual((backups[0] / "savegame").read_text(), "keep my game")
-        self.assertTrue((backups[0] / "pfx").is_symlink())
-        self.assertEqual((prefix / "version").read_text(), "GE-Proton11-11")
-        launcher.backup_before_upgrade(self.environment, lambda text: None)
-        self.assertEqual(len(list((prefix.parent / ".ge-wine-backups").iterdir())), 1)
-
-    def test_existing_ge10_prefix_is_not_migrated_or_backed_up(self):
-        prefix = Path(self.environment["WINEPREFIX"])
-        prefix.mkdir(parents=True)
-        (prefix / "version").write_text("GE-Proton10-34")
-        launcher.backup_before_upgrade(self.environment, lambda text: None)
-        self.assertFalse((prefix.parent / ".ge-wine-backups").exists())

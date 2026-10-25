@@ -35,6 +35,8 @@ class GuiTests(unittest.TestCase):
                     root.after(200, lambda: check(attempt + 1))
                     return
                 results.append(complete)
+                for timer in root.tk.call("after", "info"):
+                    root.after_cancel(timer)
                 root.destroy()
 
             root.after(200, start)
@@ -50,3 +52,44 @@ class GuiTests(unittest.TestCase):
         with patch.dict(os.environ, {"PATH": str(fixture.root), "HOME": str(fixture.home)}), patch("tkinter.Tk", factory):
             self.assertEqual(test_launcher.launcher.gui(options), 0)
         self.assertEqual(results, [True])
+
+    def test_profile_switch_updates_suggested_prefix_but_keeps_custom_path(self):
+        import tkinter as tk
+        fixture = test_launcher.LauncherTests()
+        fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        original = tk.Tk
+        results = []
+
+        def factory():
+            root = original()
+
+            def inspect():
+                try:
+                    entries = {int(w.grid_info()["row"]): w for w in root.winfo_children()
+                               if w.winfo_class() == "TEntry"}
+                    combo = next(w for w in root.winfo_children() if w.winfo_class() == "TCombobox")
+                    results.append(entries[2].get())
+                    combo.set(test_launcher.launcher.PROFILES["icarus-phoenix"])
+                    results.append(entries[2].get())
+                    entries[2].delete(0, "end")
+                    entries[2].insert(0, str(fixture.root / "custom"))
+                    combo.set(test_launcher.launcher.PROFILES["icarus-online"])
+                    results.append(entries[2].get())
+                finally:
+                    for timer in root.tk.call("after", "info"):
+                        root.after_cancel(timer)
+                    root.destroy()
+
+            root.after(200, inspect)
+            return root
+
+        options = argparse.Namespace(executable=str(fixture.exe), arguments=[], prefix=None,
+                                     proton=test_launcher.launcher.PINNED_PROTON, gameid="umu-default",
+                                     profile="icarus-online", diagnostics=False, nvidia_offload=False,
+                                     low_latency=False, no_prerequisites=False)
+        with patch.dict(os.environ, {"HOME": str(fixture.home)}), patch("tkinter.Tk", factory):
+            self.assertEqual(test_launcher.launcher.gui(options), 0)
+        base = fixture.home / ".local/share/ge-wine/prefixes"
+        self.assertEqual(results, [str(base / "icarus-vfun"), str(base / "icarus-ge10-34-clean"),
+                                   str(fixture.root / "custom")])

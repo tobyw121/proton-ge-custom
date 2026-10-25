@@ -154,7 +154,7 @@ class LauncherTests(unittest.TestCase):
             environment = launcher.prepare(self.exe, [], profile="icarus-phoenix")[1]
             self.assertEqual(environment["WINEPREFIX"], str(self.home / ".local/share/ge-wine/prefixes/icarus-ge10-34-clean"))
             self.assertNotIn("floatEmulation", environment.get("DXVK_CONFIG", ""))
-            self.assertEqual(launcher.PINNED_PROTON, "GE-Proton10-34")
+            self.assertEqual(launcher.PINNED_PROTON, "GE-Proton11-11-x86_64")
             self.assertEqual(environment["PROTONPATH"], str(launcher.pinned_proton_directory()))
             with patch.dict(os.environ, {"DXVK_CONFIG": "d3d9.floatEmulation = Strict"}):
                 custom = launcher.prepare(self.exe, [], prefix=self.root / "custom", proton="GE-Proton", profile="icarus-phoenix")[1]
@@ -171,6 +171,44 @@ class LauncherTests(unittest.TestCase):
         self.assertEqual(launcher.selected_profile(exe, "standard"), "standard")
         self.assertEqual(launcher.selected_profile(self.exe, "auto"), "standard")
         self.assertFalse(launcher.needs_prerequisites(game / "Bin64/Redist/setup.exe", "auto", True))
+
+    def test_online_profile_uses_existing_prefix_and_installs_compiler(self):
+        prefix = self.home / ".local/share/ge-wine/prefixes/icarus-vfun"
+        prefix.mkdir(parents=True)
+        (prefix / "version").write_text("GE-Proton10-34")
+        (prefix / "savegame").write_text("keep")
+        result = self.run_cli("--profile", "icarus-online", self.exe)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        record = json.loads(result.stdout)
+        self.assertEqual(record["prefix"], str(prefix))
+        self.assertEqual(record["proton"], str(self.home / ".local/share/Steam/compatibilitytools.d" / launcher.PINNED_PROTON))
+        self.assertIn("d3dcompiler_43", launcher.installed_verbs(prefix))
+        self.assertEqual((prefix / "savegame").read_text(), "keep")
+        self.assertFalse((prefix.parent / ".ge-wine-backups").exists())
+        custom = self.root / "custom-vfun"
+        result = self.run_cli("--profile", "icarus-online", "--prefix", custom, self.exe)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["prefix"], str(custom))
+
+    def test_online_auto_detection_requires_game_layout_for_vfun(self):
+        root = self.root / "VFUN"
+        frontend = root / "VLauncher/VFUNLauncher.exe"
+        frontend.parent.mkdir(parents=True)
+        frontend.touch()
+        self.assertEqual(launcher.selected_profile(frontend, "auto"), "standard")
+        game = root / "Icarus_Online/Bin64/Launcher.exe"
+        game.parent.mkdir(parents=True)
+        game.touch()
+        self.assertEqual(launcher.selected_profile(frontend, "auto"), "icarus-online")
+        self.assertEqual(launcher.selected_profile(game, "auto"), "icarus-online")
+        self.assertEqual(launcher.selected_profile(game, "standard"), "standard")
+        self.assertFalse(launcher.needs_prerequisites(game.parent / "Redist/setup.exe", "auto", True))
+        result = self.run_cli(frontend)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(json.loads(result.stdout)["prefix"].endswith("/icarus-vfun"))
+        with patch("shutil.which", return_value=str(self.backend)), patch.dict(os.environ, {"PROTON_USE_WINED3D": "1"}):
+            env = launcher.prepare(game, [], profile="auto")[1]
+            self.assertNotIn("PROTON_USE_WINED3D", env)
 
     def test_default_cli_detects_icarus_and_standard_can_bypass_setup(self):
         game = self.root / "ICARUS_Phoenix"

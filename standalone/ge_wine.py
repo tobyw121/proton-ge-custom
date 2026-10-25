@@ -10,7 +10,6 @@ from pathlib import Path
 import queue
 import re
 import shlex
-import shutil
 import subprocess
 import sys
 import tarfile
@@ -19,12 +18,14 @@ import threading
 from urllib.request import urlopen
 
 
-VERSION = "0.4.3"
-PINNED_PROTON = "GE-Proton10-34"
+VERSION = "0.5.0"
+PINNED_PROTON = "GE-Proton11-11-x86_64"
 PROTON_URL = ("https://github.com/GloriousEggroll/proton-ge-custom/releases/download/"
-              "GE-Proton10-34/GE-Proton10-34.tar.gz")
+              "GE-Proton11-11/GE-Proton11-11-x86_64.tar.gz")
 PROFILES = {"auto": "Automatisch erkennen", "standard": "Standard",
-            "icarus-phoenix": "Icarus Phoenix – RTX 2070 / 3060"}
+            "icarus-phoenix": "Icarus Phoenix – RTX 2070 / 3060",
+            "icarus-online": "Icarus Online – VFUN"}
+ICARUS_PROFILES = {"icarus-phoenix", "icarus-online"}
 ICARUS_VERBS = ("vcrun2008", "vcrun2010", "vcrun2012", "vcrun2013", "vcrun2015",
                 "d3dcompiler_43")
 
@@ -33,8 +34,9 @@ def pinned_proton_directory():
     return Path.home() / ".local/share/Steam/compatibilitytools.d" / PINNED_PROTON
 
 
-def icarus_prefix():
-    return Path.home() / ".local/share/ge-wine/prefixes/icarus-ge10-34-clean"
+def icarus_prefix(profile="icarus-phoenix"):
+    name = "icarus-vfun" if profile == "icarus-online" else "icarus-ge10-34-clean"
+    return Path.home() / ".local/share/ge-wine/prefixes" / name
 
 
 def ensure_proton(environment, report):
@@ -90,36 +92,6 @@ def ensure_proton(environment, report):
             report(f"{PINNED_PROTON} ist installiert.\n")
 
 
-def backup_before_upgrade(environment, report):
-    if environment["PROTONPATH"] != str(pinned_proton_directory()):
-        return
-    prefix = Path(environment["WINEPREFIX"])
-    version_file = prefix / "version"
-    if not version_file.is_file():
-        return
-    version = version_file.read_text(encoding="utf-8").strip()
-    match = re.search(r"GE-Proton(\d+)", version)
-    target_major = re.search(r"GE-Proton(\d+)", PINNED_PROTON)[1]
-    if not match or match[1] == target_major:
-        return
-    locks = prefix.parent / ".ge-wine-locks"
-    locks.mkdir(parents=True, exist_ok=True)
-    key = hashlib.sha256(os.fsencode(prefix)).hexdigest()
-    with (locks / (key + ".lock")).open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        backups = prefix.parent / ".ge-wine-backups"
-        backups.mkdir(exist_ok=True)
-        identifier = hashlib.sha256(version.encode()).hexdigest()[:12]
-        destination = backups / (prefix.name + "-before-ge" + target_major + "-" + identifier)
-        if not destination.exists():
-            report(f"Sichere den bisherigen Prefix vor dem Wechsel auf Proton {target_major}: {destination}\n")
-            with tempfile.TemporaryDirectory(prefix=".backup-", dir=backups) as temporary:
-                copy = Path(temporary) / "prefix"
-                shutil.copytree(prefix, copy, symlinks=True)
-                copy.rename(destination)
-        report(f"Prefix-Sicherung vorhanden: {destination}\n")
-
-
 def selected_profile(executable, profile):
     if profile != "auto":
         return profile
@@ -127,6 +99,11 @@ def selected_profile(executable, profile):
         name = directory.name.casefold().replace("_", "").replace("-", "").replace(" ", "")
         if name == "icarusphoenix" and (directory / "Launcher.exe").is_file() and (directory / "Bin64").is_dir():
             return "icarus-phoenix"
+        if name == "icarusonline" and (directory / "Bin64").is_dir():
+            return "icarus-online"
+        # VFUN's generic launcher is only identified when Icarus is installed nearby.
+        if name == "vfun" and (directory / "Icarus_Online/Bin64").is_dir():
+            return "icarus-online"
     return "standard"
 
 
@@ -138,7 +115,7 @@ def installed_verbs(prefix):
 
 
 def needs_prerequisites(executable, profile, enabled):
-    return enabled and selected_profile(executable, profile) == "icarus-phoenix" and not any(
+    return enabled and selected_profile(executable, profile) in ICARUS_PROFILES and not any(
         part.casefold() == "redist" for part in Path(executable).parts)
 
 
@@ -189,8 +166,8 @@ def prepare(executable, arguments, prefix=None, proton=PINNED_PROTON, gameid="um
         if not (proton_path / "proton").is_file():
             raise ValueError("Der GE-Proton-Ordner muss die Datei 'proton' enthalten.")
         proton = str(proton_path)
-    if not prefix and profile == "icarus-phoenix":
-        prefix = icarus_prefix()
+    if not prefix and profile in ICARUS_PROFILES:
+        prefix = icarus_prefix(profile)
     if not prefix:
         identifier = hashlib.sha256(os.fsencode(executable.parent)).hexdigest()[:16]
         prefix = Path.home() / ".local/share/ge-wine/prefixes" / identifier
@@ -200,7 +177,7 @@ def prepare(executable, arguments, prefix=None, proton=PINNED_PROTON, gameid="um
     environment = dict(os.environ)
     environment.update(WINEPREFIX=str(prefix), PROTONPATH=proton, GAMEID=gameid,
                        STORE=environment.get("STORE", "none"))
-    if profile == "icarus-phoenix":
+    if profile in ICARUS_PROFILES:
         # Let GE-Proton select DXVK normally, instead of inheriting an OpenGL override.
         environment.pop("PROTON_USE_WINED3D", None)
     if nvidia_offload:
@@ -239,7 +216,6 @@ def launch_cli(options):
         Path(environment["DXVK_LOG_PATH"]).mkdir(parents=True, exist_ok=True)
     report = lambda text: print(text, end="", file=sys.stderr, flush=True)
     ensure_proton(environment, report)
-    backup_before_upgrade(environment, report)
     if needs_prerequisites(options.executable, options.profile, not options.no_prerequisites):
         result = install_prerequisites(
             command, environment, directory,
@@ -269,7 +245,7 @@ def gui(options):
     root.rowconfigure(10, weight=1)
     executable = tk.StringVar(value=options.executable or "")
     arguments = tk.StringVar(value=shlex.join(options.arguments))
-    prefix = tk.StringVar(value=options.prefix or str(icarus_prefix()))
+    prefix = tk.StringVar(value=options.prefix or "")
     proton = tk.StringVar(value=options.proton)
     gameid = tk.StringVar(value=options.gameid)
     profile = tk.StringVar(value=PROFILES[options.profile])
@@ -277,6 +253,20 @@ def gui(options):
     nvidia_offload = tk.BooleanVar(value=options.nvidia_offload)
     low_latency = tk.BooleanVar(value=options.low_latency)
     prerequisites = tk.BooleanVar(value=not options.no_prerequisites)
+
+    suggested_prefix = [""]
+
+    def refresh_prefix(*unused):
+        key = next(key for key, label in PROFILES.items() if label == profile.get())
+        key = selected_profile(executable.get(), key)
+        suggestion = str(icarus_prefix(key)) if key in ICARUS_PROFILES else ""
+        if not options.prefix and prefix.get() in {"", suggested_prefix[0]}:
+            prefix.set(suggestion)
+        suggested_prefix[0] = suggestion
+
+    executable.trace_add("write", refresh_prefix)
+    profile.trace_add("write", refresh_prefix)
+    refresh_prefix()
     events = queue.Queue()
     running = False
     labels = ["Windows-Programm", "Argumente", "Programmordner (Prefix)",
@@ -309,9 +299,9 @@ def gui(options):
     ttk.Button(root, text="Öffnen …", command=select_file).grid(row=0, column=2, padx=12)
     ttk.Button(root, text="Wählen …", command=lambda: select_folder(prefix)).grid(row=2, column=2)
     ttk.Button(root, text="Wählen …", command=lambda: select_folder(proton)).grid(row=3, column=2)
-    ttk.Label(root, text="Vorgabe: GE-Proton10-34 (SHA512-geprüfter Download bei Bedarf).\n"
-              "Icarus: separater Prefix icarus-ge10-34-clean; keine Shader-Vorgabe.\n"
-              "Prefix vor einem Proton-Wechsel nur bei geschlossenem Spiel verwenden.").grid(
+    ttk.Label(root, text="Vorgabe: GE-Proton11-11 (SHA512-geprüfter Download bei Bedarf).\n"
+              "Phoenix: icarus-ge10-34-clean; Online/VFUN: icarus-vfun.\n"
+              "Beide Profile: nativer Shader-Compiler 43; bestehende Prefixe direkt aktualisieren.").grid(
                   row=7, column=0, columnspan=3, sticky="w", padx=12, pady=8)
     status = tk.StringVar(value="Bereit. Beim ersten Start werden GE-Proton und die Laufzeit heruntergeladen.")
     ttk.Label(root, textvariable=status, wraplength=740).grid(
@@ -329,7 +319,6 @@ def gui(options):
         try:
             report = lambda text: events.put(("log", text))
             ensure_proton(environment, report)
-            backup_before_upgrade(environment, report)
             def run(child_command, child_environment, child_directory):
                 with subprocess.Popen(child_command, env=child_environment, cwd=child_directory,
                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -413,7 +402,7 @@ def main(argv=None):
     parser.add_argument("--gui", action="store_true", help="Grafische Oberfläche öffnen")
     parser.add_argument("--prefix", help="Gemeinsamer Programmordner für Installer und Anwendung")
     parser.add_argument("--proton", default=PINNED_PROTON,
-                        help="Vorgabe GE-Proton10-34; alternativ GE-Proton für neueste Version oder Build-Ordner")
+                        help="Vorgabe GE-Proton11-11; alternativ GE-Proton für neueste Version oder Build-Ordner")
     parser.add_argument("--gameid", default=os.environ.get("GAMEID", "umu-default"))
     parser.add_argument("--profile", choices=PROFILES, default="auto")
     parser.add_argument("--no-prerequisites", action="store_true", help="Automatische Icarus-Laufzeit- und Shader-Compiler-Einrichtung überspringen")
