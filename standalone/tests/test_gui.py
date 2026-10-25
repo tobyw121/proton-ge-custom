@@ -93,3 +93,46 @@ class GuiTests(unittest.TestCase):
         base = fixture.home / ".local/share/ge-wine/prefixes"
         self.assertEqual(results, [str(base / "icarus-vfun"), str(base / "icarus-ge10-34-clean"),
                                    str(fixture.root / "custom")])
+
+    def test_immediate_stop_terminates_the_running_backend(self):
+        import tkinter as tk
+        import sys
+        fixture = test_launcher.LauncherTests()
+        fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        pidfile = fixture.root / 'backend.pid'
+        fixture.backend.write_text(f'#!{sys.executable}\nimport os,time\nfrom pathlib import Path\nPath({str(pidfile)!r}).write_text(str(os.getpid()))\ntime.sleep(90)\n')
+        original = tk.Tk
+        results = []
+
+        def factory():
+            root = original()
+
+            def inspect(attempt=0):
+                buttons = {w.cget('text'): w for w in root.winfo_children() if w.winfo_class() == 'TButton'}
+                if attempt == 0:
+                    buttons['Programm starten'].invoke()
+                labels = [w.cget('text') for w in root.winfo_children() if w.winfo_class() == 'TLabel']
+                if pidfile.exists() and str(buttons['Sofort beenden'].cget('state')) != 'disabled':
+                    buttons['Sofort beenden'].invoke()
+                if 'Programm sofort beendet.' in labels or attempt > 60:
+                    results.append('Programm sofort beendet.' in labels)
+                    for timer in root.tk.call('after', 'info'):
+                        root.after_cancel(timer)
+                    root.destroy()
+                else:
+                    root.after(100, lambda: inspect(attempt + 1))
+
+            root.after(200, inspect)
+            return root
+
+        options = argparse.Namespace(executable=str(fixture.exe), arguments=[], prefix=str(fixture.root / 'prefix'),
+                                     proton=test_launcher.launcher.PINNED_PROTON, gameid='umu-default',
+                                     profile='standard', diagnostics=False, nvidia_offload=False,
+                                     low_latency=False, no_prerequisites=False)
+        with patch.dict(os.environ, {'HOME': str(fixture.home), 'PATH': str(fixture.root),
+                                     'XDG_STATE_HOME': str(fixture.root / 'state')}), patch('tkinter.Tk', factory):
+            self.assertEqual(test_launcher.launcher.gui(options), 0)
+        self.assertEqual(results, [True])
+        import ge_wine_sessions
+        self.assertIsNone(ge_wine_sessions.identity(int(pidfile.read_text())))

@@ -36,8 +36,8 @@ Windows-/GPU-Tests sind darin nicht enthalten.
 ```sh
 bash standalone/build_deb.sh /tmp/ge-wine-dist
 cd /tmp/ge-wine-dist
-sha256sum -c ge-wine_0.5.0_amd64.deb.sha256
-sudo apt install ./ge-wine_0.5.0_amd64.deb
+sha256sum -c ge-wine_0.6.0_amd64.deb.sha256
+sudo apt install ./ge-wine_0.6.0_amd64.deb
 ```
 
 Anschließend im Anwendungsmenü **GE-Wine** öffnen oder:
@@ -268,3 +268,60 @@ GE-Proton11-11 wird mit den bisherigen Prefix-Pfaden verwendet. Es gibt keine Ä
 
 Die Steuerung ist automatisiert mit einem Test-Backend geprüft. Ein neuer
 Spieltest der automatischen Installation auf dem Zielrechner steht noch aus.
+
+## Sofort beenden und Desktop-Verknuepfungen ab 0.6.0
+
+In der GUI beendet **Sofort beenden** die aktuelle gestartete GE-Wine-Anwendung
+und ihre erfassten Kindprozesse hart. Die GUI bleibt offen. Nicht gespeicherte
+Aenderungen der Anwendung koennen verloren gehen. Ein laufender Proton-Download
+wird kooperativ nach dem aktuellen Netzwerkzugriff abgebrochen. Die automatische
+Laufzeit-Einrichtung setzt beim naechsten Start bei fehlenden Paketen wieder an.
+
+Alle von dieser Version gestarteten Sitzungen des aktuellen Linux-Benutzers,
+auch andere GE-Wine-GUI-Fenster und abgekoppelte markierte Kindprozesse:
+
+```sh
+ge-wine --kill-all
+```
+
+GE-Wine startet Backend-Aufrufe in eigenen Prozessgruppen und markiert deren
+Umgebung mit einer Sitzungs-ID. Kontrollprozesse werden mit PID und Linux-
+Startzeit registriert; veraltete PID-Eintraege duerfen keine anderen Prozesse
+beenden. Es wird nicht pauschal nach `wine` oder `python` gesucht. Bereits vor
+diesem Update gestartete unmarkierte Sitzungen sind nicht automatisch erfasst.
+Die Prozessverwaltung ist mit echten Linux-Kindprozessen getestet; das Verhalten
+abgekoppelter Prozesse innerhalb der UMU-Runtime muss auf dem Zielrechner
+ueberprueft werden.
+
+Beim ersten GUI-Start erstellt GE-Wine eine eigene Desktop-Verknuepfung.
+Beim Start einer normalen Anwendung wird ein direkter Desktop-Link angelegt.
+Nach einem erfolgreichen Installer-Lauf werden neue/geaenderte Windows-Links
+(`.lnk`) aus Windows-Desktop und Startmenue als GE-Wine-Desktop-Links uebernommen.
+Deinstallationslinks werden ausgeschlossen. Fuer Icarus Online wird der installierte
+VFUNLauncher erkannt. Die Windows-Links starten ueber Wines `start.exe /unix`;
+ihr Windows-Ziel und Arbeitsverzeichnis bleiben in der `.lnk` enthalten.
+
+Jeder Link behaelt das aufgeloeste Profil, den Prefix, den Proton-Build, die
+Spielkennung und die gewaehlten Diagnose-/Grafikoptionen. Der Zielpfad wird
+absolut gespeichert. Desktop-Exec-Argumente werden ohne Shell geschrieben und
+fuer Leerzeichen, Prozentzeichen, Anfuehrungszeichen und andere Sonderzeichen
+maskiert. Ein erneuter Start aktualisiert denselben GE-Wine-Link.
+
+Installiert ein Programm ohne Windows-Verknuepfungen, kann GE-Wine dessen
+Startprogramm nicht immer automatisch bestimmen. Dann die installierte EXE
+in der GUI auswaehlen und **Desktop-Verknuepfung erstellen** anklicken, oder:
+
+```sh
+ge-wine --create-shortcut --profile icarus-online \
+  --prefix "$HOME/.local/share/ge-wine/prefixes/icarus-vfun" \
+  '/pfad/zur/installierten/Anwendung.exe'
+```
+
+`--create-shortcut` erstellt nur den Link und startet weder Programm noch
+Laufzeit-Einrichtung. Die Verknuepfungen verwenden den Desktop aus
+`~/.config/user-dirs.dirs` bzw. `XDG_CONFIG_HOME`, zum Beispiel `Schreibtisch`.
+Ist der Desktop dort deaktiviert, werden keine Dateien im Home-Verzeichnis
+abgelegt. Neue Links sind ausfuehrbar; wenn verfuegbar wird `gio` fuer die
+Vertrauensmarkierung verwendet. Abhaengig vom Desktop kann beim ersten Start
+noch eine Bestaetigung erforderlich sein. Das Debian-Paket schreibt bei der
+Installation als root nicht auf den Desktop eines geratenen Benutzers.

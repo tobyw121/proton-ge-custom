@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 
 SOURCE = Path(__file__).resolve().parents[1] / "ge_wine.py"
+sys.path.insert(0, str(SOURCE.parent))
 spec = importlib.util.spec_from_file_location("ge_wine", SOURCE)
 launcher = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(launcher)
@@ -49,7 +50,8 @@ class LauncherTests(unittest.TestCase):
 
     def run_cli(self, *args, exit_code="0"):
         environment = dict(os.environ, PATH=str(self.root), TEST_EXIT=exit_code,
-                           HOME=str(self.root / "home"))
+                           HOME=str(self.root / "home"), XDG_STATE_HOME=str(self.root / "state"),
+                           XDG_CONFIG_HOME=str(self.root / "config"))
         environment.pop("PROTONPATH", None)
         environment.pop("GAMEID", None)
         return subprocess.run([sys.executable, str(SOURCE), *map(str, args)],

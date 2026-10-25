@@ -17,8 +17,12 @@ import tempfile
 import threading
 from urllib.request import urlopen
 
+from ge_wine_sessions import Session, LaunchCancelled, stop_all
+from ge_wine_desktop import (windows_links, installer, installed_shortcuts,
+                             program_shortcut, write_shortcut)
 
-VERSION = "0.5.0"
+
+VERSION = "0.6.0"
 PINNED_PROTON = "GE-Proton11-11-x86_64"
 PROTON_URL = ("https://github.com/GloriousEggroll/proton-ge-custom/releases/download/"
               "GE-Proton11-11/GE-Proton11-11-x86_64.tar.gz")
@@ -39,7 +43,9 @@ def icarus_prefix(profile="icarus-phoenix"):
     return Path.home() / ".local/share/ge-wine/prefixes" / name
 
 
-def ensure_proton(environment, report):
+def ensure_proton(environment, report, cancelled=None):
+    if cancelled and cancelled.is_set():
+        raise LaunchCancelled()
     target = pinned_proton_directory()
     if environment["PROTONPATH"] != str(target):
         return
@@ -69,6 +75,8 @@ def ensure_proton(environment, report):
             size = 0
             with urlopen(PROTON_URL, timeout=60) as response, archive.open("wb") as output:
                 while chunk := response.read(1024 * 1024):
+                    if cancelled and cancelled.is_set():
+                        raise LaunchCancelled()
                     size += len(chunk)
                     if size > 2 * 1024**3:
                         raise ValueError("Proton-Download ist unerwartet groß.")
@@ -85,7 +93,10 @@ def ensure_proton(environment, report):
                 for member in source.getmembers():
                     if not Path(member.name).parts or Path(member.name).parts[0] != PINNED_PROTON:
                         raise ValueError("Unerwarteter Pfad im Proton-Archiv.")
-                source.extractall(extracted, filter="data")
+                for member in source.getmembers():
+                    if cancelled and cancelled.is_set():
+                        raise LaunchCancelled()
+                    source.extract(member, extracted, filter="data")
             if not (extracted / PINNED_PROTON / "proton").is_file():
                 raise ValueError("Das geprüfte Archiv enthält kein Proton-Startprogramm.")
             (extracted / PINNED_PROTON).rename(target)
@@ -208,6 +219,34 @@ def prepare(executable, arguments, prefix=None, proton=PINNED_PROTON, gameid="um
     return command, environment, str(executable.parent)
 
 
+def report_shortcut(action, report):
+    try:
+        return action()
+    except (OSError, ValueError) as error:
+        report(f"Desktop-Verknüpfung konnte nicht erstellt werden: {error}\n")
+
+
+def application_run(options, command, environment, directory, session, report, output=None):
+    profile = selected_profile(options.executable, options.profile)
+    before = windows_links(environment["WINEPREFIX"])
+    ensure_proton(environment, report, session.cancelled)
+    session.check()
+    if needs_prerequisites(options.executable, options.profile, not options.no_prerequisites):
+        result = install_prerequisites(command, environment, directory,
+                                      lambda cmd, env, cwd: session.run(cmd, env, cwd, output), report)
+        if result:
+            return result
+    session.check()
+    if not installer(options.executable) and not any(
+            part.casefold() in {"system32", "syswow64"} for part in Path(options.executable).parts):
+        report_shortcut(lambda: program_shortcut(options, environment, options.executable, profile, report), report)
+    result = session.run(command, environment, directory, output)
+    if result == 0 and not session.cancelled.is_set():
+        report_shortcut(lambda: installed_shortcuts(options, environment, options.executable,
+                                                   profile, before, report), report)
+    return result
+
+
 def launch_cli(options):
     command, environment, directory = prepare(
         options.executable, options.arguments, options.prefix, options.proton, options.gameid,
@@ -215,15 +254,18 @@ def launch_cli(options):
     if options.diagnostics:
         Path(environment["DXVK_LOG_PATH"]).mkdir(parents=True, exist_ok=True)
     report = lambda text: print(text, end="", file=sys.stderr, flush=True)
-    ensure_proton(environment, report)
-    if needs_prerequisites(options.executable, options.profile, not options.no_prerequisites):
-        result = install_prerequisites(
-            command, environment, directory,
-            lambda cmd, env, cwd: subprocess.call(cmd, env=env, cwd=cwd),
-            report)
-        if result:
-            return result
-    return subprocess.call(command, env=environment, cwd=directory)
+    if options.create_shortcut:
+        program_shortcut(options, environment, options.executable,
+                         selected_profile(options.executable, options.profile), report)
+        return 0
+    session = Session()
+    try:
+        return application_run(options, command, environment, directory, session, report)
+    except (LaunchCancelled, KeyboardInterrupt):
+        session.stop()
+        return 130
+    finally:
+        session.close()
 
 
 def gui(options):
@@ -269,6 +311,7 @@ def gui(options):
     refresh_prefix()
     events = queue.Queue()
     running = False
+    session = Session()
     labels = ["Windows-Programm", "Argumente", "Programmordner (Prefix)",
               "GE-Proton-Version", "Spielkennung (optional)"]
     variables = [executable, arguments, prefix, proton, gameid]
@@ -315,26 +358,39 @@ def gui(options):
         output.see("end")
         output.configure(state="disabled")
 
-    def worker(command, environment, directory, bootstrap):
+    def snapshot():
+        return argparse.Namespace(
+            executable=executable.get(), arguments=shlex.split(arguments.get()),
+            prefix=prefix.get(), proton=proton.get(), gameid=gameid.get().strip() or "umu-default",
+            profile=next(key for key, value in PROFILES.items() if value == profile.get()),
+            diagnostics=diagnostics.get(), nvidia_offload=nvidia_offload.get(),
+            low_latency=low_latency.get(), no_prerequisites=not prerequisites.get())
+
+    def worker(command, environment, directory, launch_options):
         try:
             report = lambda text: events.put(("log", text))
-            ensure_proton(environment, report)
-            def run(child_command, child_environment, child_directory):
-                with subprocess.Popen(child_command, env=child_environment, cwd=child_directory,
-                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                  text=True, errors="replace", bufsize=1) as process:
-                    for line in process.stdout:
-                        events.put(("log", line))
-                    return process.wait()
-            if bootstrap:
-                result = install_prerequisites(command, environment, directory, run,
-                                               lambda text: events.put(("log", text)))
-                if result:
-                    events.put(("done", result))
-                    return
-            events.put(("done", run(command, environment, directory)))
+            result = application_run(launch_options, command, environment, directory, session, report, report)
+            events.put(("done", result))
+        except LaunchCancelled:
+            events.put(("done", 130))
         except (OSError, ValueError, tarfile.TarError) as error:
             events.put(("error", str(error)))
+
+    def stop_now():
+        session.stop()
+        stop_button.configure(state="disabled")
+        status.set("GE-Wine-Programm wird sofort beendet …")
+
+    def create_desktop():
+        try:
+            chosen = snapshot()
+            _, environment, _ = prepare(chosen.executable, chosen.arguments, chosen.prefix, chosen.proton,
+                                         chosen.gameid, chosen.profile, chosen.diagnostics,
+                                         chosen.nvidia_offload, chosen.low_latency)
+            program_shortcut(chosen, environment, chosen.executable,
+                             selected_profile(chosen.executable, chosen.profile), log)
+        except (OSError, ValueError) as error:
+            messagebox.showerror("Verknüpfung nicht möglich", str(error))
 
     def start():
         nonlocal running
@@ -349,7 +405,10 @@ def gui(options):
         except (ValueError, OSError) as error:
             messagebox.showerror("Start nicht möglich", str(error))
             return
+        launch_options = snapshot()
+        session.reset()
         running = True
+        stop_button.configure(state="normal")
         button.configure(state="disabled")
         log(f"Programmordner: {environment['WINEPREFIX']}\n")
         profile_key = next(key for key, value in PROFILES.items() if value == profile.get())
@@ -359,8 +418,7 @@ def gui(options):
         if diagnostics.get():
             log(f"Proton-/DXVK-Protokolle: {environment['DXVK_LOG_PATH']}\n")
         status.set("Wird gestartet. Der erste Download kann mehrere Minuten dauern.")
-        bootstrap = needs_prerequisites(executable.get(), profile_key, prerequisites.get())
-        threading.Thread(target=worker, args=(command, environment, directory, bootstrap), daemon=True).start()
+        threading.Thread(target=worker, args=(command, environment, directory, launch_options), daemon=True).start()
 
     def poll():
         nonlocal running
@@ -374,7 +432,10 @@ def gui(options):
             else:
                 running = False
                 button.configure(state="normal")
-                if kind == "error":
+                stop_button.configure(state="disabled")
+                if session.cancelled.is_set():
+                    status.set("Programm sofort beendet.")
+                elif kind == "error":
                     log(value + "\n")
                     status.set("Start fehlgeschlagen. Details stehen im Protokoll.")
                 else:
@@ -389,16 +450,25 @@ def gui(options):
         root.destroy()
 
     button = ttk.Button(root, text="Programm starten", command=start)
-    button.grid(row=8, column=0, columnspan=3, pady=4)
+    button.grid(row=8, column=0, pady=4)
+    stop_button = ttk.Button(root, text="Sofort beenden", command=stop_now, state="disabled")
+    stop_button.grid(row=8, column=1, pady=4)
+    ttk.Button(root, text="Desktop-Verknüpfung erstellen", command=create_desktop).grid(row=8, column=2, pady=4)
     root.protocol("WM_DELETE_WINDOW", close)
     root.after(100, poll)
-    root.mainloop()
+    report_shortcut(lambda: write_shortcut("GE-Wine", ["--gui"], "ge-wine-gui", log), log)
+    try:
+        root.mainloop()
+    finally:
+        session.close()
     return 0
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Windows-Programme mit GE-Proton starten.")
     parser.add_argument("--version", action="version", version=f"GE-Wine {VERSION}")
+    parser.add_argument("--kill-all", action="store_true", help="Alle registrierten GE-Wine-Sitzungen und ihre Kindprozesse sofort beenden")
+    parser.add_argument("--create-shortcut", action="store_true", help="Desktop-Verknüpfung mit aktuellen Startoptionen erstellen, ohne zu starten")
     parser.add_argument("--gui", action="store_true", help="Grafische Oberfläche öffnen")
     parser.add_argument("--prefix", help="Gemeinsamer Programmordner für Installer und Anwendung")
     parser.add_argument("--proton", default=PINNED_PROTON,
@@ -413,6 +483,12 @@ def main(argv=None):
     parser.add_argument("arguments", nargs=argparse.REMAINDER)
     options = parser.parse_args(argv)
     try:
+        if options.kill_all:
+            count = stop_all()
+            print(f"GE-Wine: {count} laufende Sitzungen beendet.")
+            return 0
+        if options.create_shortcut and not options.executable:
+            parser.error("--create-shortcut benötigt eine Programmdatei")
         return gui(options) if options.gui or not options.executable else launch_cli(options)
     except (ValueError, OSError, tarfile.TarError) as error:
         print(f"GE-Wine: {error}", file=sys.stderr)
