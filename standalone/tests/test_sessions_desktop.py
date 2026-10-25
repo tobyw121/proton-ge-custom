@@ -130,7 +130,7 @@ class DesktopTests(unittest.TestCase):
         command.write_text(f'#!{sys.executable}\nimport json,sys\nfrom pathlib import Path\nPath({str(output)!r}).write_text(json.dumps(sys.argv[1:]))\n')
         command.chmod(0o755)
         arguments = ['--profile', 'icarus-online', '--prefix', '/tmp/prefix with spaces',
-                     '/tmp/a"b\\c$`%file.exe', 'a;b $(touch nope)', '100%']
+                     '/tmp/a"b\\c$`%file.exe', 'a;b $(touch nope)', '100%', 'line1\nline2\tend']
         path = desktop.write_shortcut('Spiel', arguments, 'escaping', lambda s: None)
         result = subprocess.run(['desktop-file-validate', str(path)], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)

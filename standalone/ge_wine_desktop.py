@@ -30,7 +30,8 @@ def exec_line(arguments):
         for character in ('"', '`', '$'):
             arg = arg.replace(character, '\\' + character)
         return '"' + arg + '"'
-    return 'ge-wine ' + ' '.join(quote(arg) for arg in arguments).replace('\\', '\\\\')
+    value = 'ge-wine ' + ' '.join(quote(arg) for arg in arguments).replace('\\', '\\\\')
+    return value.replace('\n', '\\n').replace('\r', '\\r').replace('\t', '\\t')
 
 
 def write_shortcut(name, arguments, key, report):
