@@ -1,0 +1,32 @@
+name: Icarus Windows diagnostics script
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'diagnostics/**'
+      - '.github/workflows/icarus-windows-diagnostics.yml'
+  pull_request:
+    paths:
+      - 'diagnostics/**'
+      - '.github/workflows/icarus-windows-diagnostics.yml'
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: false
+          persist-credentials: false
+      - name: Validate with Windows PowerShell 5.1
+        shell: powershell
+        run: ./diagnostics/Test-IcarusDiagnostics.ps1
+      - uses: actions/upload-artifact@v5
+        with:
+          name: icarus-windows-diagnostics
+          path: |
+            diagnostics/Collect-IcarusWindows.ps1
+            diagnostics/README.md
+          if-no-files-found: error
