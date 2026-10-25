@@ -22,10 +22,21 @@ from ge_wine_desktop import (windows_links, installer, installed_shortcuts,
                              program_shortcut, write_shortcut)
 
 
-VERSION = "0.6.0"
+VERSION = "0.6.1"
 PINNED_PROTON = "GE-Proton11-11-x86_64"
 PROTON_URL = ("https://github.com/GloriousEggroll/proton-ge-custom/releases/download/"
               "GE-Proton11-11/GE-Proton11-11-x86_64.tar.gz")
+PHOENIX_PROTON = "GE-Proton10-34"
+PROTON_URLS = {
+    PINNED_PROTON: PROTON_URL,
+    PHOENIX_PROTON: "https://github.com/GloriousEggroll/proton-ge-custom/releases/download/GE-Proton10-34/GE-Proton10-34.tar.gz",
+}
+
+
+def profile_proton(profile):
+    return PHOENIX_PROTON if profile == "icarus-phoenix" else PINNED_PROTON
+
+
 PROFILES = {"auto": "Automatisch erkennen", "standard": "Standard",
             "icarus-phoenix": "Icarus Phoenix – RTX 2070 / 3060",
             "icarus-online": "Icarus Online – VFUN"}
@@ -34,8 +45,8 @@ ICARUS_VERBS = ("vcrun2008", "vcrun2010", "vcrun2012", "vcrun2013", "vcrun2015",
                 "d3dcompiler_43")
 
 
-def pinned_proton_directory():
-    return Path.home() / ".local/share/Steam/compatibilitytools.d" / PINNED_PROTON
+def pinned_proton_directory(version=PINNED_PROTON):
+    return Path.home() / ".local/share/Steam/compatibilitytools.d" / version
 
 
 def icarus_prefix(profile="icarus-phoenix"):
@@ -46,26 +57,29 @@ def icarus_prefix(profile="icarus-phoenix"):
 def ensure_proton(environment, report, cancelled=None):
     if cancelled and cancelled.is_set():
         raise LaunchCancelled()
-    target = pinned_proton_directory()
-    if environment["PROTONPATH"] != str(target):
+    version = next((name for name in PROTON_URLS
+                    if environment["PROTONPATH"] == str(pinned_proton_directory(name))), None)
+    if version is None:
         return
+    target = pinned_proton_directory(version)
+    url = PROTON_URLS[version]
     target.parent.mkdir(parents=True, exist_ok=True)
     with (target.parent / ".ge-wine-proton-download.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         if (target / "proton").is_file():
-            report(f"Verwende {PINNED_PROTON}.\n")
+            report(f"Verwende {version}.\n")
             return
         if target.exists():
             raise ValueError(f"Unvollständiger Proton-Ordner: {target}. Bitte einen vollständigen Build auswählen.")
-        report(f"Lade {PINNED_PROTON} herunter und prüfe SHA512 …\n")
-        with urlopen(PROTON_URL.removesuffix(".tar.gz") + ".sha512sum", timeout=60) as response:
+        report(f"Lade {version} herunter und prüfe SHA512 …\n")
+        with urlopen(url.removesuffix(".tar.gz") + ".sha512sum", timeout=60) as response:
             checksum = response.read(32769)
         if len(checksum) > 32768:
             raise ValueError("Ungültige Proton-Prüfsummendatei.")
         expected = None
         for line in checksum.decode("ascii").splitlines():
             fields = line.split()
-            if len(fields) == 2 and fields[1].lstrip("*") == PINNED_PROTON + ".tar.gz":
+            if len(fields) == 2 and fields[1].lstrip("*") == version + ".tar.gz":
                 expected = fields[0].lower()
         if not expected or not re.fullmatch(r"[0-9a-f]{128}", expected):
             raise ValueError("Keine passende SHA512-Prüfsumme für das Proton-Archiv gefunden.")
@@ -73,7 +87,7 @@ def ensure_proton(environment, report, cancelled=None):
             archive = Path(temporary) / "proton.tar.gz"
             digest = hashlib.sha512()
             size = 0
-            with urlopen(PROTON_URL, timeout=60) as response, archive.open("wb") as output:
+            with urlopen(url, timeout=60) as response, archive.open("wb") as output:
                 while chunk := response.read(1024 * 1024):
                     if cancelled and cancelled.is_set():
                         raise LaunchCancelled()
@@ -91,16 +105,16 @@ def ensure_proton(environment, report, cancelled=None):
             extracted.mkdir()
             with tarfile.open(archive, "r:gz") as source:
                 for member in source.getmembers():
-                    if not Path(member.name).parts or Path(member.name).parts[0] != PINNED_PROTON:
+                    if not Path(member.name).parts or Path(member.name).parts[0] != version:
                         raise ValueError("Unerwarteter Pfad im Proton-Archiv.")
                 for member in source.getmembers():
                     if cancelled and cancelled.is_set():
                         raise LaunchCancelled()
                     source.extract(member, extracted, filter="data")
-            if not (extracted / PINNED_PROTON / "proton").is_file():
+            if not (extracted / version / "proton").is_file():
                 raise ValueError("Das geprüfte Archiv enthält kein Proton-Startprogramm.")
-            (extracted / PINNED_PROTON).rename(target)
-            report(f"{PINNED_PROTON} ist installiert.\n")
+            (extracted / version).rename(target)
+            report(f"{version} ist installiert.\n")
 
 
 def selected_profile(executable, profile):
@@ -160,7 +174,7 @@ def install_prerequisites(command, environment, directory, run, report):
     return 0
 
 
-def prepare(executable, arguments, prefix=None, proton=PINNED_PROTON, gameid="umu-default",
+def prepare(executable, arguments, prefix=None, proton=None, gameid="umu-default",
             profile="auto", diagnostics=False, nvidia_offload=False, low_latency=False):
     if profile not in PROFILES:
         raise ValueError(f"Unbekanntes Profil: {profile}")
@@ -170,8 +184,11 @@ def prepare(executable, arguments, prefix=None, proton=PINNED_PROTON, gameid="um
     profile = selected_profile(executable, profile)
     if not gameid.strip():
         raise ValueError("Die Spielkennung darf nicht leer sein.")
-    if proton in {PINNED_PROTON, PROTON_URL}:
-        proton = str(pinned_proton_directory())
+    if not proton:
+        proton = profile_proton(profile)
+    version = next((name for name, url in PROTON_URLS.items() if proton in {name, url}), None)
+    if version is not None:
+        proton = str(pinned_proton_directory(version))
     elif proton != "GE-Proton":
         proton_path = Path(proton).expanduser().resolve()
         if not (proton_path / "proton").is_file():
@@ -288,7 +305,7 @@ def gui(options):
     executable = tk.StringVar(value=options.executable or "")
     arguments = tk.StringVar(value=shlex.join(options.arguments))
     prefix = tk.StringVar(value=options.prefix or "")
-    proton = tk.StringVar(value=options.proton)
+    proton = tk.StringVar(value=options.proton or "")
     gameid = tk.StringVar(value=options.gameid)
     profile = tk.StringVar(value=PROFILES[options.profile])
     diagnostics = tk.BooleanVar(value=options.diagnostics)
@@ -297,6 +314,7 @@ def gui(options):
     prerequisites = tk.BooleanVar(value=not options.no_prerequisites)
 
     suggested_prefix = [""]
+    suggested_proton = [""]
 
     def refresh_prefix(*unused):
         key = next(key for key, label in PROFILES.items() if label == profile.get())
@@ -305,6 +323,10 @@ def gui(options):
         if not options.prefix and prefix.get() in {"", suggested_prefix[0]}:
             prefix.set(suggestion)
         suggested_prefix[0] = suggestion
+        version = profile_proton(key)
+        if not options.proton and proton.get() in {"", suggested_proton[0]}:
+            proton.set(version)
+        suggested_proton[0] = version
 
     executable.trace_add("write", refresh_prefix)
     profile.trace_add("write", refresh_prefix)
@@ -342,9 +364,9 @@ def gui(options):
     ttk.Button(root, text="Öffnen …", command=select_file).grid(row=0, column=2, padx=12)
     ttk.Button(root, text="Wählen …", command=lambda: select_folder(prefix)).grid(row=2, column=2)
     ttk.Button(root, text="Wählen …", command=lambda: select_folder(proton)).grid(row=3, column=2)
-    ttk.Label(root, text="Vorgabe: GE-Proton11-11 (SHA512-geprüfter Download bei Bedarf).\n"
+    ttk.Label(root, text="Phoenix: GE-Proton10-34; Online/VFUN: GE-Proton11-11.\n"
               "Phoenix: icarus-ge10-34-clean; Online/VFUN: icarus-vfun.\n"
-              "Beide Profile: nativer Shader-Compiler 43; bestehende Prefixe direkt aktualisieren.").grid(
+              "Beide Profile: nativer Shader-Compiler 43; bisherige Prefixe beibehalten.").grid(
                   row=7, column=0, columnspan=3, sticky="w", padx=12, pady=8)
     status = tk.StringVar(value="Bereit. Beim ersten Start werden GE-Proton und die Laufzeit heruntergeladen.")
     ttk.Label(root, textvariable=status, wraplength=740).grid(
@@ -361,7 +383,8 @@ def gui(options):
     def snapshot():
         return argparse.Namespace(
             executable=executable.get(), arguments=shlex.split(arguments.get()),
-            prefix=prefix.get(), proton=proton.get(), gameid=gameid.get().strip() or "umu-default",
+            prefix=prefix.get(), proton=(None if not options.proton and proton.get() == suggested_proton[0]
+                                       else proton.get()), gameid=gameid.get().strip() or "umu-default",
             profile=next(key for key, value in PROFILES.items() if value == profile.get()),
             diagnostics=diagnostics.get(), nvidia_offload=nvidia_offload.get(),
             low_latency=low_latency.get(), no_prerequisites=not prerequisites.get())
@@ -471,8 +494,8 @@ def main(argv=None):
     parser.add_argument("--create-shortcut", action="store_true", help="Desktop-Verknüpfung mit aktuellen Startoptionen erstellen, ohne zu starten")
     parser.add_argument("--gui", action="store_true", help="Grafische Oberfläche öffnen")
     parser.add_argument("--prefix", help="Gemeinsamer Programmordner für Installer und Anwendung")
-    parser.add_argument("--proton", default=PINNED_PROTON,
-                        help="Vorgabe GE-Proton11-11; alternativ GE-Proton für neueste Version oder Build-Ordner")
+    parser.add_argument("--proton",
+                        help="Profilvorgabe: Phoenix GE10-34, Online/Standard GE11-11; alternativ GE-Proton oder Build-Ordner")
     parser.add_argument("--gameid", default=os.environ.get("GAMEID", "umu-default"))
     parser.add_argument("--profile", choices=PROFILES, default="auto")
     parser.add_argument("--no-prerequisites", action="store_true", help="Automatische Icarus-Laufzeit- und Shader-Compiler-Einrichtung überspringen")

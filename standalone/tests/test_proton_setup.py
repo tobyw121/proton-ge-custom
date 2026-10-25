@@ -64,3 +64,15 @@ class ProtonSetupTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             launcher.ensure_proton(self.environment, lambda text: None)
         self.assertEqual((target / "user-file").read_text(), "keep")
+
+    def test_phoenix_download_uses_ge10_archive_and_checksum(self):
+        version = launcher.PHOENIX_PROTON
+        archive = self.archive(version + "/proton")
+        checksum = f"{hashlib.sha512(archive).hexdigest()}  {version}.tar.gz\n".encode()
+        env = dict(self.environment, PROTONPATH=str(launcher.pinned_proton_directory(version)))
+        with patch.object(launcher, "urlopen", side_effect=[io.BytesIO(checksum), io.BytesIO(archive)]) as request:
+            launcher.ensure_proton(env, lambda text: None)
+        self.assertEqual(request.call_args_list[0].args[0], launcher.PROTON_URLS[version].removesuffix(".tar.gz") + ".sha512sum")
+        self.assertEqual(request.call_args_list[1].args[0], launcher.PROTON_URLS[version])
+        self.assertTrue((launcher.pinned_proton_directory(version) / "proton").is_file())
+        self.assertFalse(launcher.pinned_proton_directory().exists())

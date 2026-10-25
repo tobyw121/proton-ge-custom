@@ -152,7 +152,11 @@ class DesktopTests(unittest.TestCase):
         content = links[0].read_text()
         self.assertIn('"icarus-online"', content)
         self.assertIn('icarus-vfun', content)
-        self.assertIn(launcher.PINNED_PROTON, content)
+        self.assertNotIn("--proton", content)
+        result = self.fixture.run_cli("--create-shortcut", "--profile", "icarus-online",
+                                      "--proton", launcher.PINNED_PROTON, self.fixture.exe)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(launcher.PINNED_PROTON, links[0].read_text())
 
     def test_installer_created_link_becomes_desktop_launcher_not_installer(self):
         prefix = self.root / 'installed'

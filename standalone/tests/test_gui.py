@@ -60,6 +60,7 @@ class GuiTests(unittest.TestCase):
         self.addCleanup(fixture.doCleanups)
         original = tk.Tk
         results = []
+        versions = []
 
         def factory():
             root = original()
@@ -70,12 +71,15 @@ class GuiTests(unittest.TestCase):
                                if w.winfo_class() == "TEntry"}
                     combo = next(w for w in root.winfo_children() if w.winfo_class() == "TCombobox")
                     results.append(entries[2].get())
+                    versions.append(entries[3].get())
                     combo.set(test_launcher.launcher.PROFILES["icarus-phoenix"])
                     results.append(entries[2].get())
+                    versions.append(entries[3].get())
                     entries[2].delete(0, "end")
                     entries[2].insert(0, str(fixture.root / "custom"))
                     combo.set(test_launcher.launcher.PROFILES["icarus-online"])
                     results.append(entries[2].get())
+                    versions.append(entries[3].get())
                 finally:
                     for timer in root.tk.call("after", "info"):
                         root.after_cancel(timer)
@@ -85,7 +89,7 @@ class GuiTests(unittest.TestCase):
             return root
 
         options = argparse.Namespace(executable=str(fixture.exe), arguments=[], prefix=None,
-                                     proton=test_launcher.launcher.PINNED_PROTON, gameid="umu-default",
+                                     proton=None, gameid="umu-default",
                                      profile="icarus-online", diagnostics=False, nvidia_offload=False,
                                      low_latency=False, no_prerequisites=False)
         with patch.dict(os.environ, {"HOME": str(fixture.home)}), patch("tkinter.Tk", factory):
@@ -93,6 +97,10 @@ class GuiTests(unittest.TestCase):
         base = fixture.home / ".local/share/ge-wine/prefixes"
         self.assertEqual(results, [str(base / "icarus-vfun"), str(base / "icarus-ge10-34-clean"),
                                    str(fixture.root / "custom")])
+
+        self.assertEqual(versions, [test_launcher.launcher.PINNED_PROTON,
+                                    test_launcher.launcher.PHOENIX_PROTON,
+                                    test_launcher.launcher.PINNED_PROTON])
 
     def test_immediate_stop_terminates_the_running_backend(self):
         import tkinter as tk

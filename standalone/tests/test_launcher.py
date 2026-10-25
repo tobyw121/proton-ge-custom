@@ -25,6 +25,9 @@ class LauncherTests(unittest.TestCase):
         installed = self.home / ".local/share/Steam/compatibilitytools.d" / launcher.PINNED_PROTON
         installed.mkdir(parents=True)
         (installed / "proton").write_text("test fixture\n")
+        phoenix = installed.parent / launcher.PHOENIX_PROTON
+        phoenix.mkdir()
+        (phoenix / "proton").write_text("test fixture\n")
         self.exe = self.root / "Spiel mit Leerzeichen;$(echo nein).exe"
         self.exe.touch()
         self.backend = self.root / "umu-run"
@@ -157,7 +160,7 @@ class LauncherTests(unittest.TestCase):
             self.assertEqual(environment["WINEPREFIX"], str(self.home / ".local/share/ge-wine/prefixes/icarus-ge10-34-clean"))
             self.assertNotIn("floatEmulation", environment.get("DXVK_CONFIG", ""))
             self.assertEqual(launcher.PINNED_PROTON, "GE-Proton11-11-x86_64")
-            self.assertEqual(environment["PROTONPATH"], str(launcher.pinned_proton_directory()))
+            self.assertEqual(environment["PROTONPATH"], str(launcher.pinned_proton_directory(launcher.PHOENIX_PROTON)))
             with patch.dict(os.environ, {"DXVK_CONFIG": "d3d9.floatEmulation = Strict"}):
                 custom = launcher.prepare(self.exe, [], prefix=self.root / "custom", proton="GE-Proton", profile="icarus-phoenix")[1]
             self.assertEqual(custom["WINEPREFIX"], str(self.root / "custom"))
@@ -221,6 +224,7 @@ class LauncherTests(unittest.TestCase):
         result = self.run_cli("--prefix", prefix, exe)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(launcher.installed_verbs(prefix), set(launcher.ICARUS_VERBS))
+        self.assertEqual(json.loads(result.stdout)["proton"], str(self.home / ".local/share/Steam/compatibilitytools.d" / launcher.PHOENIX_PROTON))
         plain = self.root / "standard-prefix"
         result = self.run_cli("--profile", "standard", "--prefix", plain, exe)
         self.assertEqual(result.returncode, 0, result.stderr)

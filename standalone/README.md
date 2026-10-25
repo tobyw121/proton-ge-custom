@@ -36,8 +36,8 @@ Windows-/GPU-Tests sind darin nicht enthalten.
 ```sh
 bash standalone/build_deb.sh /tmp/ge-wine-dist
 cd /tmp/ge-wine-dist
-sha256sum -c ge-wine_0.6.0_amd64.deb.sha256
-sudo apt install ./ge-wine_0.6.0_amd64.deb
+sha256sum -c ge-wine_0.6.1_amd64.deb.sha256
+sudo apt install ./ge-wine_0.6.1_amd64.deb
 ```
 
 Anschließend im Anwendungsmenü **GE-Wine** öffnen oder:
@@ -68,8 +68,8 @@ Ohne Angabe wird je Verzeichnis der EXE ein eigener Prefix unter
 
 ## Version und Spiele-Fixes
 
-Seit 0.5.0 ist standardmäßig **GE-Proton11-11-x86_64** fest eingestellt,
-auch fuer beide Icarus-Profile. Der Nutzer hat einen erfolgreichen VFUN-Start
+Seit 0.6.1 verwendet **Icarus Phoenix GE-Proton10-34**, waehrend
+**Icarus Online/VFUN und Standard GE-Proton11-11-x86_64** verwenden. Der Nutzer hat einen erfolgreichen VFUN-Start
 mit dieser Version gemeldet; ein erneuter Phoenix-Test steht noch aus.
 Der Download stammt aus dem offiziellen Release, wird vor dem Entpacken mit
 dessen SHA512-Datei geprüft und anschließend wiederverwendet. Mit
@@ -150,8 +150,7 @@ oder beispielsweise:
 ge-wine --no-prerequisites --profile icarus-phoenix '/pfad/ICARUS_Phoenix/Launcher.exe'
 ```
 
-Bestehende Prefixe werden auf Nutzerwunsch direkt auf GE-Proton11-11
-aktualisiert. Es wird keine automatische Prefix-Kopie erstellt. Nach dem Wechsel
+Bestehende Prefixe werden mit der Version des gewaehlten Profils verwendet. Es wird keine automatische Prefix-Kopie erstellt. Nach dem Wechsel
 diesen Prefix nicht mit GE10 zurueckstufen. Vor dem Update Spiel und Launcher schliessen.
 Die VC++-Einrichtung ist kein bestätigter Fix für den zuvor beobachteten
 Stacküberlauf des Launchers. Der Launcher bringt selbst .NET Core 3.1.32 mit;
@@ -216,7 +215,8 @@ Weitere Lizenzhinweise stehen in den jeweiligen UMU-Quelldateien.
 
 ## Icarus Online / VFUN und Phoenix ab 0.5.0
 
-Beide Profile verwenden GE-Proton11-11-x86_64 und richten VC++ 2008–2015 sowie
+Phoenix verwendet ab 0.6.1 GE-Proton10-34, Online/VFUN GE-Proton11-11-x86_64.
+Beide Profile richten VC++ 2008–2015 sowie
 Microsofts `d3dcompiler_43` mit nativer DLL-Einstellung ueber UMU/Winetricks ein.
 Bereits bestaetigte Pakete werden uebersprungen. `--no-prerequisites` bzw. der
 Haken in der GUI schalten diese Einrichtung fuer beide Profile ab.
@@ -226,8 +226,8 @@ Haken in der GUI schalten diese Einrichtung fuer beide Profile ab.
 | `icarus-phoenix` | `~/.local/share/ge-wine/prefixes/icarus-ge10-34-clean` |
 | `icarus-online` | `~/.local/share/ge-wine/prefixes/icarus-vfun` |
 
-Der historische Phoenix-Ordnername bleibt erhalten; der Inhalt wird mit GE11
-verwendet. Beide bestehenden Prefixe werden direkt aktualisiert, ohne neue
+Der Phoenix-Ordnername bleibt erhalten und wird wieder mit GE10 verwendet.
+Die bestehenden Prefixe bleiben erhalten, ohne neue
 Kopie oder automatische Sicherung. Vorhandene alte Sicherungen bleiben erhalten.
 Ein ausdruecklich gewaehlter Prefix oder Proton-Build hat weiterhin Vorrang.
 
@@ -264,7 +264,7 @@ werden nicht erneut ausgeführt. Bereits manuell installiertes `d3dcompiler_43`
 wird anhand des Winetricks-Protokolls erkannt. Die Einstellung gilt nur für das
 Icarus-Profil (auch bei automatischer Erkennung); `--no-prerequisites` schaltet
 auch diese Installation ab. Ab 0.5.0 gilt dies fuer beide Icarus-Profile;
-GE-Proton11-11 wird mit den bisherigen Prefix-Pfaden verwendet. Es gibt keine Änderung an den Spieldateien und keinen neuen Proton-Build.
+Die profilabhaengige Proton-Version wird mit den bisherigen Prefix-Pfaden verwendet. Es gibt keine Änderung an den Spieldateien und keinen neuen Proton-Build.
 
 Die Steuerung ist automatisiert mit einem Test-Backend geprüft. Ein neuer
 Spieltest der automatischen Installation auf dem Zielrechner steht noch aus.
@@ -301,8 +301,10 @@ Deinstallationslinks werden ausgeschlossen. Fuer Icarus Online wird der installi
 VFUNLauncher erkannt. Die Windows-Links starten ueber Wines `start.exe /unix`;
 ihr Windows-Ziel und Arbeitsverzeichnis bleiben in der `.lnk` enthalten.
 
-Jeder Link behaelt das aufgeloeste Profil, den Prefix, den Proton-Build, die
-Spielkennung und die gewaehlten Diagnose-/Grafikoptionen. Der Zielpfad wird
+Jeder Link behaelt das aufgeloeste Profil, den Prefix, die
+Spielkennung und die gewaehlten Diagnose-/Grafikoptionen. Ab 0.6.1 folgen neue
+Links der Proton-Profilvorgabe. Eine ausdruecklich ausgewaehlte Proton-Version
+wird weiterhin fest gespeichert. Der Zielpfad wird
 absolut gespeichert. Desktop-Exec-Argumente werden ohne Shell geschrieben und
 fuer Leerzeichen, Prozentzeichen, Anfuehrungszeichen und andere Sonderzeichen
 maskiert. Ein erneuter Start aktualisiert denselben GE-Wine-Link.
@@ -325,3 +327,18 @@ abgelegt. Neue Links sind ausfuehrbar; wenn verfuegbar wird `gio` fuer die
 Vertrauensmarkierung verwendet. Abhaengig vom Desktop kann beim ersten Start
 noch eine Bestaetigung erforderlich sein. Das Debian-Paket schreibt bei der
 Installation als root nicht auf den Desktop eines geratenen Benutzers.
+
+## Getrennte Proton-Versionen ab 0.6.1
+
+- Icarus Phoenix: GE-Proton10-34, inklusive SHA512-geprueftem Download.
+- Icarus Online / VFUN: GE-Proton11-11-x86_64.
+- Die GUI passt die vorgeschlagene Version beim Profilwechsel automatisch an.
+- `--proton` oder eine manuell gewaehlte Version haben weiterhin Vorrang.
+- Neue Desktop-Links ohne explizite Versionswahl folgen der Profilvorgabe.
+
+Alte Phoenix-Links aus 0.5.0/0.6.0 enthalten moeglicherweise einen festen
+GE11-Pfad. In der neuen GUI Phoenix auswaehlen und den Link mit
+**Desktop-Verknuepfung erstellen** erneuern. Es gibt keinen automatischen
+Prefix-Wechsel und keine neue Prefix-Kopie. Wurde ein Phoenix-Prefix bereits
+mit GE11 verwendet, ist die Kompatibilitaet beim Wechsel zurueck auf GE10
+auf dem Zielrechner zu pruefen; es wird kein Wiederherstellungserfolg behauptet.

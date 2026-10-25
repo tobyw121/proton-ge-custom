@@ -64,8 +64,9 @@ def write_shortcut(name, arguments, key, report):
 
 
 def shortcut_arguments(options, environment, executable, profile, arguments):
-    command = ['--profile', profile, '--prefix', environment['WINEPREFIX'],
-               '--proton', environment['PROTONPATH'], '--gameid', options.gameid]
+    command = ['--profile', profile, '--prefix', environment['WINEPREFIX'], '--gameid', options.gameid]
+    if options.proton:
+        command.extend(['--proton', environment['PROTONPATH']])
     for attribute, flag in [('diagnostics', '--diagnostics'), ('nvidia_offload', '--nvidia-offload'),
                             ('low_latency', '--low-latency'), ('no_prerequisites', '--no-prerequisites')]:
         if getattr(options, attribute, False):
