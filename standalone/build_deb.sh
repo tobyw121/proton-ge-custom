@@ -16,7 +16,7 @@ git -C "$build_dir/umu-source" checkout --quiet --detach FETCH_HEAD
 test "$(git -C "$build_dir/umu-source" rev-parse HEAD)" = "$umu_commit"
 stage="$build_dir/package"
 install -Dm644 "$source_dir/ge_wine.py" "$stage/usr/lib/ge-wine/ge_wine.py"
-install -m644 "$source_dir/ge_wine_sessions.py" "$source_dir/ge_wine_desktop.py" "$stage/usr/lib/ge-wine/"
+install -m644 "$source_dir/ge_memory.py" "$source_dir/ge_wine_sessions.py" "$source_dir/ge_wine_desktop.py" "$stage/usr/lib/ge-wine/"
 mkdir -p "$stage/usr/lib/ge-wine/backend" "$stage/DEBIAN" \
     "$stage/usr/share/doc/ge-wine" "$stage/usr/share/applications"
 cp -R "$build_dir/umu-source/umu" "$stage/usr/lib/ge-wine/backend/"
@@ -36,6 +36,22 @@ cat > "$stage/usr/bin/ge-wine" <<'EOF'
 exec /usr/bin/python3 /usr/lib/ge-wine/ge_wine.py "$@"
 EOF
 chmod 755 "$stage/usr/bin/ge-wine"
+cat > "$stage/usr/bin/ge-memory" <<'EOF'
+#!/bin/sh
+exec /usr/bin/python3 /usr/lib/ge-wine/ge_memory.py "$@"
+EOF
+cat > "$stage/usr/share/applications/ge-memory.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=GE-Memory
+Comment=Nativer Linux-Speicherinspektor fuer GE-Wine
+Exec=ge-memory
+TryExec=ge-memory
+Icon=applications-development
+Terminal=false
+Categories=Development;Debugger;
+StartupNotify=false
+EOF
 cat > "$stage/usr/share/applications/ge-wine.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application
@@ -75,7 +91,7 @@ StartupNotify=false
 EOF
 cat > "$stage/DEBIAN/control" <<'EOF'
 Package: ge-wine
-Version: 0.6.1
+Version: 0.7.0
 Architecture: amd64
 Maintainer: GE-Wine contributors <ge-wine@example.invalid>
 Section: utils
@@ -87,7 +103,7 @@ Description: Desktop and command-line frontend for GE-Proton through UMU
 EOF
 find "$stage" -type d -exec chmod 755 {} +
 find "$stage" -type f -exec chmod 644 {} +
-chmod 755 "$stage/usr/bin/ge-wine"
-dpkg-deb --root-owner-group --build "$stage" "$output_dir/ge-wine_0.6.1_amd64.deb"
-(cd "$output_dir" && sha256sum ge-wine_0.6.1_amd64.deb > ge-wine_0.6.1_amd64.deb.sha256)
-printf 'Package: %s/ge-wine_0.6.1_amd64.deb\n' "$output_dir"
+chmod 755 "$stage/usr/bin/ge-wine" "$stage/usr/bin/ge-memory"
+dpkg-deb --root-owner-group --build "$stage" "$output_dir/ge-wine_0.7.0_amd64.deb"
+(cd "$output_dir" && sha256sum ge-wine_0.7.0_amd64.deb > ge-wine_0.7.0_amd64.deb.sha256)
+printf 'Package: %s/ge-wine_0.7.0_amd64.deb\n' "$output_dir"

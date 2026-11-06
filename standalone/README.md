@@ -36,8 +36,8 @@ Windows-/GPU-Tests sind darin nicht enthalten.
 ```sh
 bash standalone/build_deb.sh /tmp/ge-wine-dist
 cd /tmp/ge-wine-dist
-sha256sum -c ge-wine_0.6.1_amd64.deb.sha256
-sudo apt install ./ge-wine_0.6.1_amd64.deb
+sha256sum -c ge-wine_0.7.0_amd64.deb.sha256
+sudo apt install ./ge-wine_0.7.0_amd64.deb
 ```
 
 Anschließend im Anwendungsmenü **GE-Wine** öffnen oder:
@@ -342,3 +342,64 @@ GE11-Pfad. In der neuen GUI Phoenix auswaehlen und den Link mit
 Prefix-Wechsel und keine neue Prefix-Kopie. Wurde ein Phoenix-Prefix bereits
 mit GE11 verwendet, ist die Kompatibilitaet beim Wechsel zurueck auf GE10
 auf dem Zielrechner zu pruefen; es wird kein Wiederherstellungserfolg behauptet.
+
+## GE-Memory: nativer Linux-Speicherinspektor ab 0.7.0
+
+Das Paket enthaelt eine eigene Python/Tk-Anwendung mit Menueeintrag **GE-Memory**:
+
+```sh
+ge-memory
+ge-memory --list
+ge-memory --pid 12345
+```
+
+GE-Memory ist eine unabhaengige erste Implementierung mit grundlegenden
+Speichereditor-Funktionen. Es ist kein vollstaendiger Cheat-Engine-Fork und
+benoetigt keine Windows-Cheat-Engine-EXE.
+
+- Eigene Prozesse auswaehlen; Filter fuer GE-Wine/Wine anhand der Prozessumgebung.
+- Exakte Zahlensuche: Int32, Int64, Float32 und Float64, little-endian.
+- Folgesuche: gleich, geaendert, unveraendert, gestiegen oder gesunken.
+- Ausgewaehlte Werte schreiben und maximal 64 Adressen einfrieren (alle 250 ms).
+- Erste 2000 Treffer anzeigen; intern maximal 100000 Treffer.
+- Suche abbrechen; Standardlimit 256 MiB, einstellbar von 1 bis 4096 MiB.
+
+Es werden nur les-/schreibbare private Speicherbereiche und natuerlich
+ausgerichtete Werte durchsucht. Das Limit zaehlt auch uebersprungene Bereiche;
+kein Treffer bedeutet bei begrenzter Suche nicht, dass der Wert nirgendwo existiert.
+Float-Suche vergleicht exakte gepackte Werte, ohne Toleranzintervall. Die Tabelle
+zeigt die Werte der letzten Suche bzw. des letzten eigenen Schreibvorgangs.
+Eine neue Erstsuche oder Prozessauswahl entfernt bisherige Freeze-Eintraege.
+PID und Prozessstartzeit werden beim Zugriff geprueft, damit eine wiederverwendete
+PID nicht versehentlich als derselbe Prozess behandelt wird.
+
+### Gemeinsam mit GE-Wine starten
+
+1. GE-Memory oeffnen und **GE-Wine starten** anklicken.
+2. In diesem GE-Wine-Fenster die Anwendung starten.
+3. Prozessliste in GE-Memory aktualisieren und den eigentlichen Spielprozess
+   waehlen; bei Icarus kann dieser ebenfalls `Launcher.exe` heissen.
+4. Datentyp und sichtbaren Wert eingeben, Erstsuche ausfuehren und durch weitere
+   Suchlaeufe eingrenzen. Wert aendern bzw. einfrieren nur an bekannten Treffern.
+
+Linux entscheidet ueber den Zugriff auf `/proc/<pid>/mem`. GE-Memory verwendet
+keine automatische Root-Ausfuehrung und aendert weder Yama noch andere
+System-Schutzregeln. Beim ueblichen `ptrace_scope=1` hilft der Start als
+Kindprozess des Inspektors. Bereits ausserhalb dieses Baums laufende Wine-Server,
+strengere Systemregeln und geschuetzte Prozesse koennen weiterhin den Zugriff
+verhindern. In diesem Fall wird ein Zugriffsfehler angezeigt, keine scheinbar
+erfolgreiche leere Suche. Speicherfehler koennen die Zielanwendung zum Absturz
+bringen; beim Beenden des Zielprozesses wird Einfrieren gestoppt.
+
+`--random-name` setzt optional einen kosmetischen Linux-Prozessnamen. Es ist
+keine Tarnung: Prozessargumente, GUI-Titel und Speicherzugriffe bleiben sichtbar.
+Es gibt keine Zusage fuer GameGuard-/Anti-Cheat-Kompatibilitaet. Kernel-Debugger,
+Assembler, Pointer-Scanner und Cheat-Engine-Tabellen werden in dieser ersten
+Version nicht implementiert.
+
+Die Tests pruefen Lesen, Schreiben, Suchgrenzen, Folgesuche, PID-Identitaet und
+GUI-Suche samt Freeze/Freigabe an echten selbst gestarteten Linux-Testprozessen.
+In der Cloud ist der Schreibtest ausserhalb der schreibgeschuetzten Sandbox
+noetig; der Zugriff bleibt auf diese Testprozesse beschraenkt. Ein echter
+Proton-/Icarus-Speichertest ist hier weiterhin nicht moeglich und steht auf dem
+Zielrechner aus. Phoenix bleibt auf GE10-34, Online auf GE11-11.
