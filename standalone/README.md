@@ -36,8 +36,8 @@ Windows-/GPU-Tests sind darin nicht enthalten.
 ```sh
 bash standalone/build_deb.sh /tmp/ge-wine-dist
 cd /tmp/ge-wine-dist
-sha256sum -c ge-wine_0.7.0_amd64.deb.sha256
-sudo apt install ./ge-wine_0.7.0_amd64.deb
+sha256sum -c ge-wine_0.8.0_amd64.deb.sha256
+sudo apt install ./ge-wine_0.8.0_amd64.deb
 ```
 
 Anschließend im Anwendungsmenü **GE-Wine** öffnen oder:
@@ -358,17 +358,19 @@ Speichereditor-Funktionen. Es ist kein vollstaendiger Cheat-Engine-Fork und
 benoetigt keine Windows-Cheat-Engine-EXE.
 
 - Eigene Prozesse auswaehlen; Filter fuer GE-Wine/Wine anhand der Prozessumgebung.
-- Exakte Zahlensuche: Int32, Int64, Float32 und Float64, little-endian.
+- Exakte Zahlensuche: Int8/16/32/64, UInt8/16/32/64, Float32/64 und Bool; little-endian.
+- Standardmaessig automatische Suche ueber alle darstellbaren Zahlentypen.
 - Folgesuche: gleich, geaendert, unveraendert, gestiegen oder gesunken.
-- Ausgewaehlte Werte schreiben und maximal 64 Adressen einfrieren (alle 250 ms).
-- Erste 2000 Treffer anzeigen; intern maximal 100000 Treffer.
-- Suche abbrechen; Standardlimit 256 MiB, einstellbar von 1 bis 4096 MiB.
+- Ausgewaehlte Werte typgerecht schreiben, zuruecklesen und maximal 64 Treffer einfrieren (alle 300 ms).
+- 2000 Treffer nach Typen verteilt anzeigen; standardmaessig maximal 100000 Treffer je Typ.
+- Suche abbrechen; Standardlimit 0 = alle geeigneten Speicherbereiche, optional begrenzbar bis 65536 MiB.
 
-Es werden nur les-/schreibbare private Speicherbereiche und natuerlich
-ausgerichtete Werte durchsucht. Das Limit zaehlt auch uebersprungene Bereiche;
+Standardmaessig werden les-/schreibbare private Speicherbereiche und natuerlich
+ausgerichtete Werte durchsucht. Gemeinsamer RAM und ungerichtete Suche sind optional.
+Geraetemappings unter /dev werden uebersprungen; /dev/shm ist fuer gemeinsamen RAM zugelassen. Das Limit zaehlt auch uebersprungene Bereiche;
 kein Treffer bedeutet bei begrenzter Suche nicht, dass der Wert nirgendwo existiert.
-Float-Suche vergleicht exakte gepackte Werte, ohne Toleranzintervall. Die Tabelle
-zeigt die Werte der letzten Suche bzw. des letzten eigenen Schreibvorgangs.
+Float-Suche vergleicht exakte gepackte Werte, ohne Toleranzintervall. Die Tabelle zeigt den aktuellen Wert, den Wert der letzten Suche, den Erstwert
+und den Typ getrennt. Live-Anzeige veraendert die Vergleichsbasis der Folgesuche nicht.
 Eine neue Erstsuche oder Prozessauswahl entfernt bisherige Freeze-Eintraege.
 PID und Prozessstartzeit werden beim Zugriff geprueft, damit eine wiederverwendete
 PID nicht versehentlich als derselbe Prozess behandelt wird.
@@ -403,3 +405,45 @@ In der Cloud ist der Schreibtest ausserhalb der schreibgeschuetzten Sandbox
 noetig; der Zugriff bleibt auf diese Testprozesse beschraenkt. Ein echter
 Proton-/Icarus-Speichertest ist hier weiterhin nicht moeglich und steht auf dem
 Zielrechner aus. Phoenix bleibt auf GE10-34, Online auf GE11-11.
+
+## Live-Werte, Datentypen und Spielerkennung ab 0.8.0
+
+**Automatisch** durchsucht in einem Durchlauf alle numerischen Darstellungen,
+die den eingegebenen Wert repraesentieren koennen. Werte ausserhalb des jeweiligen
+Typbereichs werden fuer diesen Typ uebersprungen. Text, Bytefolgen und Pointer-
+Scanner sind damit nicht implementiert. Ein Rohspeicher enthaelt keine verlaessliche
+Information ueber den urspruenglichen C/C++-Datentyp; dieselbe Adresse kann deshalb
+mehrfach mit verschiedenen passenden Typen auftauchen. Die gewaehlte Trefferzeile
+bestimmt beim Schreiben exakt Typ und Bytebreite, unabhaengig vom aktuellen
+Suchtyp-Feld. Bool erlaubt nur 0/1 oder true/false. Ueberlaeufe und widerspruechliche
+ueberlappende Schreibziele werden vor dem ersten Schreibzugriff abgelehnt.
+
+Das Trefferlimit ist pro Typ getrennt, damit haeufige Byte-Werte keine Float-
+oder Int64-Treffer verdraengen. **Treffer/Typ** ist zwischen 100 und 1000000
+einstellbar. Hohe Grenzen benoetigen entsprechend viel RAM. Das Speicherlimit
+0 umfasst alle geeigneten virtuellen RAM-Bereiche, nicht nur residenten RSS.
+Trefferlimits, uebersprungene Bereiche und Teilscans werden im Status angezeigt.
+Folgesuche und Live-Ansicht buendeln benachbarte Werte in seitenweisen Lesezugriffen.
+
+Die Live-Anzeige aktualisiert den sichtbaren Tabellenbereich und ausgewaehlte
+Treffer alle 300 ms. Aenderungen werden kurz farbig markiert; das Feld **Neuer Wert**
+wird dabei nicht laufend ueberschrieben. Folgesuchen vergleichen gegen den letzten
+Suchlauf. Erstwerte bleiben erhalten. Einfrieren schreibt ebenfalls mit dem
+Treffertyp; nach einer Folgesuche weggefilterte Freeze-Treffer werden freigegeben.
+
+Nach **Schreiben** wird der Prozessspeicher sofort zurueckgelesen. Stimmt er schon
+nicht mehr mit dem Zielwert ueberein, meldet die GUI dies. Eine Anwendung kann
+Werte spaeter neu berechnen oder aus Serverdaten wiederherstellen. Erfolgreiches
+Ruecklesen belegt den RAM-Wert zu diesem Zeitpunkt, nicht eine serverseitige
+Aenderung oder die Wahl des richtigen logischen Spielwerts. Mehrere getrennte
+Schreibadressen bilden keine atomare Transaktion.
+
+**Spiel erkennen (>1 GiB)** beruecksichtigt Hauptprozesse des aktuellen Benutzers
+mit GE-Wine-/Wine-Zuordnung und mehr als 1 GiB RSS. Threads werden nicht einzeln
+behandelt; VFUN-/Icarus-Patcher, GameGuard und bekannte Runtime-Helfer werden
+als Kandidaten ausgeschlossen. Ein eindeutiger Kandidat wird vorausgewaehlt,
+ein einzelner CryGame.dll-Kandidat hat Vorrang. Bei mehreren unklaren Kandidaten
+ist die Auswahl manuell. Bereits gewaehlte Zielprozesse werden nicht allein
+wegen eines anderen RAM-Verbrauchs gewechselt. **Hauptprozess**, RSS und
+Kandidaten-Markierung erscheinen in der Prozessauswahl. RAM-Verbrauch allein
+beweist keine Spieleigenschaft und die Auswahl gibt keine zusaetzlichen Zugriffsrechte.

@@ -22,7 +22,7 @@ from ge_wine_desktop import (windows_links, installer, installed_shortcuts,
                              program_shortcut, write_shortcut)
 
 
-VERSION = "0.7.0"
+VERSION = "0.8.0"
 PINNED_PROTON = "GE-Proton11-11-x86_64"
 PROTON_URL = ("https://github.com/GloriousEggroll/proton-ge-custom/releases/download/"
               "GE-Proton11-11/GE-Proton11-11-x86_64.tar.gz")

@@ -92,11 +92,104 @@ class MemoryTests(unittest.TestCase):
         self.assertIn(self.child.pid, [r[0] for r in rows])
         self.assertEqual(next(r[2] for r in rows if r[0]==self.child.pid), '/tmp/ge-memory-test-prefix')
 
+    def test_auto_scan_keeps_types_and_writes_only_their_byte_width(self):
+        base = self.addresses['start']-1
+        kinds = list(memory.TYPES)
+        expected = {}
+        for index, kind in enumerate(kinds):
+            address = base+64+index*32
+            data = memory.pack_value('1' if kind=='Bool' else '100',kind)
+            self.mem.write(address,data)
+            expected[(address,kind)] = data
+        outcome = memory.scan_types(self.mem,memory.patterns_for('100',memory.TYPES),8192,
+                                    threading.Event(),regions=[memory.Region(base,base+8192,'rw-p')])
+        for key,data in expected.items():
+            if key[1]=='Bool':
+                continue
+            self.assertIn(key,outcome.hits)
+            self.assertEqual(outcome.hits[key].baseline,data)
+        for key,data in expected.items():
+            address,kind = key
+            self.mem.write(address-4,b'ABCD')
+            self.mem.write(address+len(data),b'WXYZ')
+            hit = memory.Hit(address,kind,data,data)
+            encoded,actual = memory.write_hits(self.mem,{key:hit},[key],'0')
+            self.assertEqual(actual[key],memory.pack_value('0',kind))
+            self.assertEqual(encoded[key],actual[key])
+            self.assertEqual(self.mem.read(address-4,4),b'ABCD')
+            self.assertEqual(self.mem.read(address+len(data),4),b'WXYZ')
+
+    def test_live_reads_preserve_scan_baseline_and_first_value(self):
+        address = self.addresses['number']; key = (address,'Int32')
+        original = memory.pack_value('1370291737','Int32')
+        hit = memory.Hit(address,'Int32',original,original)
+        self.state('change')
+        sample = memory.live_read(self.mem,{key:hit})
+        self.assertEqual(memory.unpack_value(sample[key],'Int32'),1370291738)
+        self.assertEqual(hit.baseline,original)
+        follow = memory.refine_hits(self.mem,{key:hit},'Geaendert',{},threading.Event())
+        self.assertIn(key,follow)
+        self.assertEqual(follow[key].initial,original)
+        self.assertEqual(follow[key].baseline,sample[key])
+
+    def test_byte_hit_limit_does_not_starve_float_search(self):
+        base = self.addresses['start']-1
+        for offset in range(0,64,4):
+            self.mem.write(base+offset,b'dddd')
+        floating = base+4096
+        self.mem.write(floating,memory.pack_value('100','Float32'))
+        outcome = memory.scan_types(self.mem,memory.patterns_for('100',['UInt8','Float32']),8192,
+                                    threading.Event(),regions=[memory.Region(base,base+8192,'rw-p')],max_hits=4)
+        self.assertIn((floating,'Float32'),outcome.hits)
+        self.assertIn('UInt8',outcome.capped_types)
+        self.assertLessEqual(len(outcome.hits),4)
+
+    def test_invalid_mixed_write_is_rejected_before_any_memory_change(self):
+        base = self.addresses['start']-1
+        keys = [(base+64,'Int32'),(base+96,'Int8')]
+        hits = {}
+        for address,kind in keys:
+            data = memory.pack_value('10',kind); self.mem.write(address,data)
+            hits[(address,kind)] = memory.Hit(address,kind,data,data)
+        with self.assertRaises(ValueError):
+            memory.write_hits(self.mem,hits,keys,'300')
+        self.assertEqual(self.mem.read(keys[0][0],4),memory.pack_value('10','Int32'))
+        address = keys[0][0]
+        overlap = memory.Hit(address,'Float32',memory.pack_value('1','Float32'),b'0000')
+        hits[(address,'Float32')] = overlap
+        with self.assertRaisesRegex(ValueError,'Ueberlappende'):
+            memory.write_hits(self.mem,hits,[keys[0],(address,'Float32')],'20')
+
+    def test_readback_reports_target_overwrite_instead_of_false_success(self):
+        address = self.addresses['number']; key = (address,'Int32')
+        old = self.mem.read(address,4)
+        hit = memory.Hit(address,'Int32',old,old)
+        real_read = self.mem.read
+        def changed_read(address,size):
+            self.state('change')
+            return real_read(address,size)
+        with patch.object(self.mem,'read',side_effect=changed_read):
+            encoded,actual = memory.write_hits(self.mem,{key:hit},[key],'82')
+        self.assertEqual(memory.unpack_value(encoded[key],'Int32'),82)
+        self.assertEqual(memory.unpack_value(actual[key],'Int32'),83)
+
+    def test_game_recognition_prefers_main_game_over_large_launcher(self):
+        self.assertTrue(memory.is_game_candidate('launcher.exe',5*1024**3,True))
+        self.assertFalse(memory.is_game_candidate('VLauncher.exe',3*1024**3,True))
+        self.assertFalse(memory.is_game_candidate('GameMon.des',2*1024**3,True))
+        self.assertFalse(memory.is_game_candidate('game.exe',1024**3,True))
+        self.assertFalse(memory.is_game_candidate('game.exe',5*1024**3,False))
+        game = memory.ProcessInfo(136833,'launcher.exe','/prefix',5*1024**3,True,True)
+        other = memory.ProcessInfo(700,'other.exe','/prefix2',2*1024**3,True,False)
+        self.assertEqual(memory.preferred_game([other,game]),136833)
+        self.assertIsNone(memory.preferred_game([other,memory.ProcessInfo(800,'second.exe','/p',3*1024**3,True)]))
+
     @unittest.skipUnless(os.environ.get('DISPLAY'), 'Requires X display')
     def test_gui_scan_and_write_real_child(self):
         import tkinter as tk
         original = tk.Tk
         checks = []
+        live_checks = []
         address = self.addresses['number']
 
         def factory():
@@ -111,15 +204,9 @@ class MemoryTests(unittest.TestCase):
                         entry.delete(0,'end'); entry.insert(0,'1370291737')
                         button = next(w for w in frames[4].winfo_children() if w.cget('text') == 'Erstsuche')
                         button.invoke()
-                    if tree.exists(str(address)):
-                        tree.selection_set(str(address))
-                        entry = next(w for w in frames[6].winfo_children() if w.winfo_class() == 'TEntry')
-                        entry.delete(0,'end'); entry.insert(0,'45454545')
-                        button = next(w for w in frames[6].winfo_children() if w.winfo_class() == 'TButton' and w.cget('text') == 'Einfrieren')
-                        button.invoke()
-                        checks.append(self.state()['number'])
+                    if tree.exists(f'{address}:Int32'):
                         self.state('change')
-                        root.after(600, lambda: check_frozen(tree, frames))
+                        root.after(450,lambda: check_live(tree,frames))
                     elif attempt > 100:
                         checks.append('timeout'); finish()
                     else:
@@ -127,10 +214,24 @@ class MemoryTests(unittest.TestCase):
                 except Exception as error:
                     checks.append(str(error)); finish()
 
+            def check_live(tree,frames):
+                try:
+                    values = tree.item(f'{address}:Int32','values')
+                    live_checks.append(tuple(str(v) for v in values[2:5]))
+                    tree.selection_set(f'{address}:Int32')
+                    entry = next(w for w in frames[6].winfo_children() if w.winfo_class()=='TEntry')
+                    entry.delete(0,'end'); entry.insert(0,'45454545')
+                    next(w for w in frames[6].winfo_children() if w.winfo_class()=='TButton' and w.cget('text')=='Einfrieren').invoke()
+                    checks.append(self.state()['number'])
+                    self.state('change')
+                    root.after(600,lambda: check_frozen(tree,frames))
+                except Exception as error:
+                    checks.append(str(error)); finish()
+
             def check_frozen(tree, frames):
                 try:
                     checks.append(self.state()['number'])
-                    tree.selection_set(str(address))
+                    tree.selection_set(f'{address}:Int32')
                     next(w for w in frames[6].winfo_children() if w.winfo_class() == 'TButton' and w.cget('text') == 'Freigeben').invoke()
                     self.state('change')
                     root.after(400, lambda: (checks.append(self.state()['number']), finish()))
@@ -148,3 +249,4 @@ class MemoryTests(unittest.TestCase):
         with patch('tkinter.Tk',factory), patch('tkinter.messagebox.showerror', side_effect=lambda *args: checks.append(args)):
             self.assertEqual(memory.gui(self.child.pid),0)
         self.assertEqual(checks,[45454545,45454545,45454546])
+        self.assertEqual(live_checks,[('1370291738','1370291737','1370291737')])
