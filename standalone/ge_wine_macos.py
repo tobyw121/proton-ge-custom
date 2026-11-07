@@ -201,7 +201,7 @@ def main(argv=None):
     parser.add_argument('--full-trace',action='store_true');parser.add_argument('--no-shortcuts',action='store_true')
     parser.add_argument('--kill-all',action='store_true');parser.add_argument('--compact-logs',metavar='ORDNER')
     parser.add_argument('--doctor',action='store_true',help='macOS-Build und gebündelte Python-/Tk-Version prüfen')
-    parser.add_argument('--setup-runtime',action='store_true',help='Native Wine-Laufzeit herunterladen und Abhängigkeiten prüfen')
+    parser.add_argument('--setup-runtime',action='store_true',help='Native Wine-Laufzeit herunterladen; Multimedia-Abhängigkeit wird beim Programmstart geprüft')
     parser.add_argument('executable',nargs='?');parser.add_argument('arguments',nargs=argparse.REMAINDER)
     options=parser.parse_args([value for value in (sys.argv[1:] if argv is None else argv) if not value.startswith('-psn_')])
     report=lambda text:print(text,end='',file=sys.stderr,flush=True)
@@ -215,7 +215,6 @@ def main(argv=None):
             print(f'GE-Wine: {stop_all()} Sitzungen beendet.');return 0
         if options.setup_runtime:
             print(ensure_wine(report,explicit=options.wine))
-            if not options.wine:require_dependencies(report)
             return 0
         if options.gui or not options.executable:
             return gui(options)

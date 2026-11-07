@@ -55,32 +55,13 @@ jobs:
         with:
           path: |
             ~/Library/Application Support/GE-Wine/runtimes
-            dist/gstreamer.pkg
           key: macos-wine-${{ matrix.arch }}-${{ hashFiles('standalone/macos_runtime.json') }}
-      - name: Download verified GStreamer installer (Intel)
-        if: matrix.arch == 'x86_64'
-        timeout-minutes: 5
-        env:
-          PYTHONUNBUFFERED: '1'
-        run: |
-          python3 - <<'PYCODE'
-          import sys
-          sys.path.insert(0,'standalone')
-          from ge_wine_macos_runtime import download, manifest
-          from pathlib import Path
-          spec=manifest()['gstreamer']
-          download(spec,Path('dist/gstreamer.pkg'),lambda text: print(text,flush=True))
-          PYCODE
-      - name: Install GStreamer dependency (Intel)
-        if: matrix.arch == 'x86_64'
-        timeout-minutes: 5
-        run: sudo installer -pkg dist/gstreamer.pkg -target /
       - name: Set up native Wine from packaged application (Intel)
         if: matrix.arch == 'x86_64'
         timeout-minutes: 5
         run: |
           ditto -x -k dist/macos/ge-wine_0.13.0_macos_x86_64.zip dist/smoke
-          'dist/smoke/GE-Wine.app/Contents/MacOS/GE-Wine' --setup-runtime
+          'dist/smoke/GE-Wine.app/Contents/MacOS/GE-Wine' --setup-runtime > dist/native-wine-path.txt
       - name: Native Windows executable smoke test (Intel)
         if: matrix.arch == 'x86_64'
         timeout-minutes: 5
@@ -92,7 +73,8 @@ jobs:
           executable=Path('dist/smoke/GE-Wine.app/Contents/MacOS/GE-Wine').resolve()
           probe=Path('dist/smoke.exe').resolve()
           prefix=Path('dist/smoke-prefix').resolve()
-          result=subprocess.run([str(executable),'--no-shortcuts','--prefix',str(prefix),str(probe)],
+          native_wine=Path('dist/native-wine-path.txt').read_text().strip()
+          result=subprocess.run([str(executable),'--wine',native_wine,'--no-shortcuts','--prefix',str(prefix),str(probe)],
                                 env=dict(os.environ,WINEDLLOVERRIDES='mscoree,mshtml,winemenubuilder.exe=d'),timeout=180)
           assert result.returncode==42, f'Windows probe returned {result.returncode}, expected 42'
           assert list((prefix/'logs').glob('*/repetitions.jsonl')), 'Missing per-instance logs'

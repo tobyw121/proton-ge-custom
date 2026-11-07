@@ -37,6 +37,7 @@ Die CLI liegt unter:
 
 Beispiele:
 "/Applications/GE-Wine.app/Contents/MacOS/GE-Wine" --doctor
+"/Applications/GE-Wine.app/Contents/MacOS/GE-Wine" --setup-runtime
 "/Applications/GE-Wine.app/Contents/MacOS/GE-Wine" --prefix "$HOME/Library/Application Support/GE-Wine/prefixes/mein-spiel" /pfad/Spiel.exe
 "/Applications/GE-Wine.app/Contents/MacOS/GE-Wine" --kill-all
 
@@ -62,6 +63,7 @@ Renderer; Linux-DXVK-/Vulkan-Funktionen werden nicht vorgetäuscht.
 GE-Memory und der Linux-Speedhack sind nicht Bestandteil des Mac-Pakets.
 
 GitHub Actions baut DMG/ZIP für Intel und Apple Silicon. Auf Intel führt der Build
-zusätzlich eine minimale Windows-x64-EXE durch Wine aus (ExitProcess(42)). Auf ARM
+zusätzlich eine minimale Windows-x64-Konsolen-EXE durch Wine aus (ExitProcess(42));
+Multimedia/GStreamer wird von diesem Test nicht verwendet oder als getestet ausgegeben. Auf ARM
 wird das native Frontend gebaut/geprüft; ein Spiele-/Rosetta-Lauf wird damit nicht
 behauptet. Icarus und dessen Anti-Cheat werden durch diesen Build nicht getestet.
