@@ -13,6 +13,7 @@ import struct
 import subprocess
 import sys
 import threading
+import tempfile
 import uuid
 
 from ge_wine_sessions import identity
@@ -458,9 +459,62 @@ def preferred_game(processes):
     cry = [p for p in candidates if p.cryengine]
     return cry[0].pid if len(cry) == 1 else candidates[0].pid if len(candidates) == 1 else None
 
+
+def launch_speed_program(executable, context_pid=None, expected_stamp=None):
+    """Start through GE-Wine with clock support; preserve an explicitly selected prefix."""
+    executable=Path(executable).expanduser().resolve()
+    if not executable.is_file():
+        raise ValueError('Programmdatei nicht gefunden.')
+    command=[sys.executable,str(Path(__file__).with_name('ge_wine.py')),'--speed-control']
+    if context_pid is not None:
+        stamp=identity(context_pid)
+        if stamp is None or expected_stamp is not None and stamp != expected_stamp:
+            raise ProcessLookupError('Der ausgewählte Prozess wurde beendet.')
+        environment={}
+        for entry in Path(f'/proc/{context_pid}/environ').read_bytes().split(b'\0'):
+            key,separator,value=entry.partition(b'=')
+            if separator and key in (b'WINEPREFIX',b'PROTONPATH',b'GAMEID'):
+                environment[key.decode()]=os.fsdecode(value)
+        if identity(context_pid)!=stamp:
+            raise ProcessLookupError('Der ausgewählte Prozess wurde beendet.')
+        for key,flag in (('WINEPREFIX','--prefix'),('PROTONPATH','--proton'),('GAMEID','--gameid')):
+            if environment.get(key):command.extend([flag,environment[key]])
+    command.append(str(executable))
+    token=uuid.uuid4().hex
+    logs=Path(os.environ.get('XDG_STATE_HOME',Path.home()/'.local/state'))/'ge-memory/launches'
+    logs.mkdir(parents=True,exist_ok=True,mode=0o700)
+    # A regular file keeps the game independent of the lifetime of the GUI's output reader.
+    with tempfile.NamedTemporaryFile(prefix=token+'-',suffix='.log',dir=logs,delete=False) as output:
+        log=Path(output.name)
+        try:
+            process=subprocess.Popen(command,env=dict(os.environ,GE_MEMORY_LAUNCH_ID=token),
+                                     stdout=output,stderr=subprocess.STDOUT,start_new_session=True)
+        except BaseException:
+            log.unlink(missing_ok=True)
+            raise
+    return process,token,executable.name.casefold(),log
+
+
+def launched_speed_target(rows, token, executable):
+    """Only auto-select processes belonging to this launch, with a usable clock controller."""
+    owned=[]
+    marker=('GE_MEMORY_LAUNCH_ID='+token).encode()
+    for row in rows:
+        try:
+            if marker not in Path(f'/proc/{row.pid}/environ').read_bytes().split(b'\0'):
+                continue
+            SpeedControl(row.pid)
+            owned.append(row)
+        except (OSError,ValueError):
+            continue
+    game=preferred_game(owned)
+    if game is not None:return game
+    exact=[row.pid for row in owned if row.name.casefold()==executable]
+    return exact[0] if len(exact)==1 else None
+
 def gui(initial_pid=None):
     import tkinter as tk
-    from tkinter import ttk, messagebox
+    from tkinter import ttk, messagebox, filedialog
     import itertools
     import time
     try:
@@ -518,6 +572,7 @@ def gui(initial_pid=None):
     type_filter = tk.StringVar(value='Alle Typen'); page_text = tk.StringVar(); selection_text = tk.StringVar(value='Treffer auswählen, um einen Wert zu bearbeiten.')
     live_enabled = tk.BooleanVar(value=True)
     speed_target = None; speed_modified = {}
+    speed_launches = {}; next_launch_scan = 0
     speed_enabled = tk.BooleanVar(value=False)
     speed_factor = tk.StringVar(value='2'); speed_status = tk.StringVar(value='Zuerst einen Prozess auswählen.')
     speed_title = tk.StringVar(value='Kein Zielprozess')
@@ -617,7 +672,7 @@ def gui(initial_pid=None):
                     speed_status.set(f"{'Aktiv' if info['requested'] != 1 else 'Deaktiviert'} · Faktor {info['applied']:g}× von der Zeitbibliothek bestätigt.\nZeitabfragen: {info['calls']} · Wirkung im Spiel bitte prüfen.")
             except (OSError, ValueError) as error:
                 speed_target = None; speed_enabled.set(False)
-                speed_status.set('Keine erreichbare Zeitbibliothek. Programm neu über GE-Wine mit „Speedhack-Steuerung“ starten.\n' + str(error))
+                speed_status.set('Keine erreichbare Zeitbibliothek. Über „Programm starten …“ hier in GE-Memory neu starten.\n' + str(error))
         for widget in (speed_apply, speed_reset, speed_toggle, speed_inline_toggle, speed_inline_apply, *speed_presets):
             widget.configure(state='normal' if speed_target is not None and not busy else 'disabled')
 
@@ -663,7 +718,7 @@ def gui(initial_pid=None):
         button = ttk.Button(speed_panel, text=f'{factor:g}×', command=preset)
         button.grid(row=4, column=index, sticky='ew', pady=(8, 0), padx=(0, 6))
         speed_presets.append(button)
-    ttk.Button(speed_panel, text='GE-Wine starten', command=lambda:launch_ge_wine()).grid(row=7, column=0, columnspan=4, sticky='ew', pady=(16, 0))
+    ttk.Button(speed_panel, text='Programm starten …', command=lambda:launch_program()).grid(row=7, column=0, columnspan=4, sticky='ew', pady=(16, 0))
     ttk.Button(header, text='Speedhack …', command=show_speed).pack(side='right', padx=(0, 18))
     speed_inline = ttk.Frame(connection, style='Card.TFrame')
     speed_inline.grid(row=2, column=0, columnspan=4, sticky='ew', pady=(14, 0))
@@ -680,7 +735,7 @@ def gui(initial_pid=None):
 
     def error_message(error):
         if isinstance(error, PermissionError):
-            return ('Linux verweigert Speicherzugriff. GE-Wine ueber dieses Fenster neu starten; bereits laufende '
+            return ('Linux verweigert Speicherzugriff. Programm über „Programm starten …“ neu starten; bereits laufende '
                     'Wine-Server koennen ausserhalb dieses Prozessbaums liegen. Keine System-Schutzregeln werden geaendert.')
         return str(error)
 
@@ -853,16 +908,32 @@ def gui(initial_pid=None):
                 number = unpack_value(data,key[1])
                 new_value.set(str(int(number)) if key[1]=='Bool' else str(number))
 
-    def launch_ge_wine():
+    def launch_program():
+        executable=filedialog.askopenfilename(parent=root,title='Programm mit Speedhack-Unterstützung starten',
+                                             filetypes=[('Windows-Programme','*.exe'),('Alle Dateien','*')])
+        if not executable:return
         try:
-            subprocess.Popen([sys.executable,str(Path(__file__).with_name('ge_wine.py')),'--gui','--speed-control'],start_new_session=True)
-            status.set('GE-Wine mit Speedhack-Steuerung geöffnet. Anwendung starten, danach Spiel erkennen.')
-        except OSError as error:
-            messagebox.showerror('GE-Wine',str(error))
+            process,token,name,log=launch_speed_program(executable,memory.pid if memory else None,memory.stamp if memory else None)
+            speed_launches[token]=dict(process=process,name=name,lines=[],auto=True,selected=None,log=log)
+            status.set('Programm wird gestartet. Speedhack-Vorbereitung und Prozessauswahl erfolgen automatisch …')
+            def watch():
+                with log.open(encoding='utf-8',errors='replace') as output:
+                    while True:
+                        line=output.readline()
+                        if line:
+                            events.put(('speed_launch_output',(token,line.rstrip())))
+                        elif process.poll() is not None:
+                            break
+                        else:
+                            time.sleep(.2)
+                events.put(('speed_launch_exit',(token,process.wait())))
+            threading.Thread(target=watch,daemon=True).start()
+        except (OSError,ValueError) as error:
+            messagebox.showerror('Programm starten',str(error))
 
     def sync_controls():
         process_box.configure(state='disabled' if busy else 'readonly')
-        for button in (refresh_button, detect_button):
+        for button in (refresh_button, detect_button, launch_button):
             button.configure(state='disabled' if busy else 'normal')
         first_button.configure(state='normal' if memory is not None and not busy else 'disabled')
         refine_button.configure(state='normal' if results and not busy else 'disabled')
@@ -894,7 +965,8 @@ def gui(initial_pid=None):
     refresh_button = ttk.Button(connection, text='Aktualisieren', command=refresh); refresh_button.grid(row=0, column=2)
     detect_button = ttk.Button(connection, text='Spiel erkennen', command=lambda:refresh(True)); detect_button.grid(row=0, column=3, padx=(8, 0))
     ttk.Checkbutton(connection, text='Nur GE-Wine / Wine', variable=wine_only, command=refresh).grid(row=1, column=1, sticky='w', pady=(8, 0))
-    ttk.Button(connection, text='GE-Wine öffnen', command=launch_ge_wine).grid(row=1, column=2, columnspan=2, sticky='e', pady=(8, 0))
+    launch_button=ttk.Button(connection, text='Programm starten …', command=launch_program, style='Accent.TButton')
+    launch_button.grid(row=1, column=2, columnspan=2, sticky='e', pady=(8, 0))
     first_button = ttk.Button(buttons, text='Erstsuche', command=lambda:start_scan(True), style='Accent.TButton'); first_button.grid(row=0, column=0, sticky='ew', pady=(0, 6))
     refine_button = ttk.Button(buttons, text='Folgesuche', command=lambda:start_scan(False)); refine_button.grid(row=1, column=0, sticky='ew', pady=(0, 6))
     stop_button = ttk.Button(buttons, text='Suche abbrechen', command=cancel.set); stop_button.grid(row=2, column=0, sticky='ew')
@@ -910,9 +982,12 @@ def gui(initial_pid=None):
                                mode=mode_box, upper=upper_entry, tolerance=tolerance_text,
                                speed_apply=speed_apply, speed_reset=speed_reset, speed_factor=speed_factor,
                                speed_enabled=speed_enabled, speed_toggle=speed_inline_toggle,
-                               speed_inline=speed_inline, speed_inline_apply=speed_inline_apply,
+                               speed_inline=speed_inline, speed_inline_apply=speed_inline_apply, speed_launch=launch_button,
                                speed_status=speed_status, speed_window=speed_window)
-    process_box.bind('<<ComboboxSelected>>',lambda event:choose_process())
+    def manual_process(event=None):
+        for launch in speed_launches.values():launch['auto']=False
+        choose_process()
+    process_box.bind('<<ComboboxSelected>>',manual_process)
     mode_box.bind('<<ComboboxSelected>>', lambda event:sync_controls())
     filter_box.bind('<<ComboboxSelected>>', lambda event:change_page())
     tree.bind('<<TreeviewSelect>>',selection_changed)
@@ -923,12 +998,25 @@ def gui(initial_pid=None):
     root.bind('<Control-f>', lambda event:search_entry.focus_set())
 
     def poll():
-        nonlocal busy, results, live, watching
+        nonlocal busy, results, live, watching, next_launch_scan
         for _ in range(200):
             try:
                 action,data = events.get_nowait()
             except queue.Empty:
                 break
+            if action=='speed_launch_output':
+                token,line=data
+                if token in speed_launches:
+                    lines=speed_launches[token]['lines'];lines.append(line);del lines[:-20]
+                    if speed_launches[token]['selected'] is None:status.set(line)
+                continue
+            if action=='speed_launch_exit':
+                token,result=data
+                if result:
+                    launch=speed_launches.get(token,{})
+                    messagebox.showerror('Programmstart fehlgeschlagen',f'GE-Wine wurde mit Code {result} beendet.\nStartprotokoll: {launch.get("log","")}\n'+'\n'.join(launch.get('lines',[])[-10:]))
+                # Descendants may survive the launching executable; keep their launch marker.
+                continue
             if action=='progress':
                 status.set(data)
             else:
@@ -965,6 +1053,18 @@ def gui(initial_pid=None):
                     live[key] = None
                 update_rows(visible_keys)
                 status.set('Speicherzugriff beendet: '+error_message(error))
+        if speed_launches and not busy and time.monotonic() >= next_launch_scan:
+            next_launch_scan=time.monotonic()+1
+            rows=process_list(True,detailed=True)
+            for token,launch in speed_launches.items():
+                if not launch['auto']:continue
+                target=launched_speed_target(rows,token,launch['name'])
+                if target is not None and target != launch['selected']:
+                    refresh()
+                    label=next((label for label,pid in process_ids.items() if pid==target),'')
+                    if label:
+                        pid_value.set(label);choose_process();launch['selected']=target
+                        status.set('Gestarteter Prozess ausgewählt. Speedhack jetzt hier aktivieren und Faktor einstellen.')
         refresh_speed()
         root.after(300,poll)
 

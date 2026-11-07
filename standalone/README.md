@@ -377,10 +377,11 @@ PID nicht versehentlich als derselbe Prozess behandelt wird.
 
 ### Gemeinsam mit GE-Wine starten
 
-1. GE-Memory oeffnen und **GE-Wine starten** anklicken.
-2. In diesem GE-Wine-Fenster die Anwendung starten.
-3. Prozessliste in GE-Memory aktualisieren und den eigentlichen Spielprozess
-   waehlen; bei Icarus kann dieser ebenfalls `Launcher.exe` heissen.
+1. GE-Memory öffnen und **Programm starten …** anklicken.
+2. EXE auswählen; GE-Memory startet die Anwendung im Hintergrund.
+3. Die automatische Prozessauswahl abwarten oder bei mehreren Kandidaten
+   den eigentlichen Spielprozess wählen; bei Icarus kann dieser ebenfalls
+   `Launcher.exe` heißen.
 4. Datentyp und sichtbaren Wert eingeben, Erstsuche ausfuehren und durch weitere
    Suchlaeufe eingrenzen. Wert aendern bzw. einfrieren nur an bekannten Treffern.
 
@@ -532,10 +533,12 @@ einer Spielvariable oder ein serverseitiger Wert ableiten.
 
 ## Speedhack ab 0.11.0 (experimentell)
 
-1. Die Anwendung neu über `ge-wine --speed-control /pfad/Programm.exe` starten.
-   Alternativ in der GE-Wine-GUI „Speedhack-Steuerung für GE-Memory“ aktivieren.
-   Der Button „GE-Wine starten/öffnen“ in GE-Memory aktiviert diese Vorbereitung.
-2. In GE-Memory den tatsächlichen Spielprozess auswählen. Die Speedhack-Steuerung
+1. In GE-Memory **Programm starten …** anklicken und die EXE auswählen.
+   GE-Memory startet GE-Wine mit Speedhack-Unterstützung im Hintergrund. Es ist
+   kein Terminalbefehl und kein zusätzliches GE-Wine-Fenster nötig.
+2. Der gestartete Prozess wird automatisch ausgewählt, sobald seine Zeitbibliothek
+   bereit ist; ein später gestarteter eindeutiger Spielprozess wird ebenfalls erkannt.
+   Bei mehreren uneindeutigen Kandidaten den Prozess selbst auswählen. Die Speedhack-Steuerung
    steht direkt unter der Prozessauswahl; „Speedhack …“ öffnet zusätzlich die Details.
 3. Faktor eingeben und „Speedhack aktiv“ einschalten oder „Faktor anwenden“ wählen.
    Ausschalten setzt den Prozess auf 1× zurück und behält den gewählten Faktor für
@@ -544,6 +547,16 @@ einer Spielvariable oder ein serverseitiger Wert ableiten.
 4. Die Anzeige unterscheidet angeforderte und von der Zeitbibliothek bestätigte
    Faktoren. Eine Bestätigung bedeutet, dass abgefangene Zeitabfragen skaliert werden;
    die Wirkung auf das konkrete Spiel muss separat geprüft werden.
+
+Wenn bereits ein Prozess ausgewählt ist, übernimmt der Programmstart dessen
+Prefix, Protonpfad und Spielkennung. Ohne Auswahl gelten die automatischen
+GE-Wine-Profilvorgaben. Bei einem bereits ohne Zeitbibliothek laufenden Spiel ist
+einmaliges Beenden und Starten über diesen Button erforderlich; es erfolgt keine
+nachträgliche Injektion oder automatische Beendigung des laufenden Spiels.
+Startdiagnosen liegen unter `~/.local/state/ge-memory/launches/` (bzw.
+`$XDG_STATE_HOME/ge-memory/launches/`), detaillierte Instanzlogs weiterhin im Prefix.
+Die automatische Auswahl berücksichtigt nur Prozesse dieses konkreten Starts;
+eine manuelle Prozessauswahl beendet die automatische Auswahl.
 
 Alle vorbereiteten Prozesse starten zunächst bei 1×. Nur die ausgewählte PID wird
 geändert. Beim regulären Schließen von GE-Memory werden die von diesem Fenster

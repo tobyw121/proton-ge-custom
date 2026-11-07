@@ -62,8 +62,8 @@ class SpeedTests(unittest.TestCase):
                 subprocess.run(['gcc','-m32','-O2','-D_TIME_BITS=64','-D_FILE_OFFSET_BITS=64',str(cls.root/'probe.c'),'-o',str(cls.root/'probe32time64')], check=True, capture_output=True)
             cls.architectures.append(architecture)
 
-    def spawn(self, architecture):
-        env = dict(os.environ)
+    def spawn(self, architecture, extra_environment=None):
+        env = dict(os.environ, **(extra_environment or {}))
         session = SpeedSession(env, self.root)
         self.addCleanup(session.close)
         process = subprocess.Popen([str(self.root/('probe'+architecture))], env=env, stdin=subprocess.PIPE,
@@ -224,6 +224,59 @@ class SpeedTests(unittest.TestCase):
         self.assertEqual(failures,[])
         self.measure(process,1)
         self.assertEqual(control.read()['applied'],1)
+
+    def test_direct_program_launch_prepares_clock_support_without_another_gui(self):
+        import ge_memory
+        fixture=test_launcher.LauncherTests();fixture.setUp();self.addCleanup(fixture.doCleanups)
+        fixture.backend.write_text(f'#!{sys.executable}\nimport json,os\nprint(json.dumps(dict(marker=os.environ["GE_MEMORY_LAUNCH_ID"],speed=os.environ["GE_WINE_SPEED_DIR"],prefix=os.environ["WINEPREFIX"])))\n')
+        environment=dict(HOME=str(fixture.home),PATH=str(fixture.root),
+                         XDG_STATE_HOME=str(fixture.root/'state'),GE_WINE_SPEED_LIBRARY_DIR=str(self.root))
+        with patch.dict(os.environ,environment):
+            process,token,name,log=ge_memory.launch_speed_program(fixture.exe)
+            self.assertEqual(process.wait(timeout=20),0,log.read_text())
+        records=[json.loads(line) for line in log.read_text().splitlines() if line.startswith('{"marker"')]
+        self.assertEqual(records[0]['marker'],token)
+        self.assertTrue(records[0]['speed'])
+        self.assertEqual(name,fixture.exe.name.casefold())
+        self.assertEqual(log.stat().st_mode & 0o777,0o600)
+
+    @unittest.skipUnless(os.environ.get('DISPLAY'),'Requires X display')
+    def test_gui_starts_program_and_auto_selects_its_prepared_process(self):
+        import tkinter as tk
+        import ge_memory
+        token='e'*32
+        process,control,_=self.spawn('64',dict(GE_MEMORY_LAUNCH_ID=token,WINEPREFIX=str(self.root/'prefix')))
+        log=self.root/'start.log';log.touch()
+        original=tk.Tk;failures=[]
+        def factory():
+            root=original()
+            def finish():
+                for timer in root.tk.call('after','info'):root.after_cancel(timer)
+                root.tk.call(root.protocol('WM_DELETE_WINDOW'))
+            def check(attempt=0):
+                try:
+                    widgets=root.memory_widgets
+                    if widgets['speed_toggle'].instate(['disabled']):
+                        if attempt>=30:raise AssertionError('Launched process was not selected')
+                        root.after(100,lambda:check(attempt+1));return
+                    widgets['speed_factor'].set('2')
+                    widgets['speed_toggle'].invoke();self.measure(process,2)
+                    widgets['speed_toggle'].invoke();self.measure(process,1)
+                except Exception as error:failures.append(str(error))
+                finish()
+            def start():
+                root.memory_widgets['speed_launch'].invoke()
+                root.after(100,check)
+            root.after(100,start)
+            return root
+        rows=[ge_memory.ProcessInfo(process.pid,'probe64',str(self.root/'prefix'),100,False)]
+        with patch('tkinter.Tk',factory),patch('tkinter.filedialog.askopenfilename',return_value=str(self.root/'probe64')), \
+             patch.object(ge_memory,'launch_speed_program',return_value=(process,token,'probe64',log)) as launch, \
+             patch.object(ge_memory,'process_list',return_value=rows), \
+             patch('tkinter.messagebox.showerror',side_effect=lambda *args:failures.append(str(args))):
+            ge_memory.gui()
+        launch.assert_called_once_with(str(self.root/'probe64'),None,None)
+        self.assertEqual(failures,[])
 
     def test_pid_namespace_mapping_and_session_reset(self):
         process, original, session = self.spawn('64')
