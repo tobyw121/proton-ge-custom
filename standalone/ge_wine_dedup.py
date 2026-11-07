@@ -12,6 +12,7 @@ import sqlite3
 import stat
 import tempfile
 import threading
+import time
 
 ANSI = re.compile(rb'\x1b\[[0-?]*[ -/]*[@-~]')
 ISO = re.compile(rb'^\[(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?)\]\s*')
@@ -75,6 +76,7 @@ class LogIndex:
                 id INTEGER PRIMARY KEY, file TEXT NOT NULL, digest BLOB NOT NULL,
                 line INTEGER NOT NULL, count INTEGER NOT NULL, first_seen TEXT, last_seen TEXT,
                 first_runtime_timestamp TEXT, last_runtime_timestamp TEXT, UNIQUE(file,digest))''')
+            self.connection.execute('CREATE INDEX IF NOT EXISTS message_counts ON messages(count)')
             self.connection.execute('''CREATE TABLE IF NOT EXISTS files (
                 file TEXT PRIMARY KEY, size INTEGER, mtime_ns INTEGER)''')
         except (sqlite3.Error,OSError) as error:
@@ -167,7 +169,11 @@ class LogIndex:
             if temporary is not None:
                 temporary.unlink(missing_ok=True)
 
-    def export(self, pending=()):
+    def export(self, pending=(), live_files=()):
+        with self.lock:
+            return self._export(pending, set(live_files))
+
+    def _export(self, pending, live_files):
         self.commit()
         target = self.root / 'repetitions.jsonl'
         temporary = None
@@ -178,8 +184,17 @@ class LogIndex:
                     first_runtime_timestamp,last_runtime_timestamp FROM messages WHERE count>1 ORDER BY id''')
                 keys = ('id','file','line','count','first_seen','last_seen','first_runtime_timestamp','last_runtime_timestamp')
                 for row in rows:
-                    output.write(json.dumps(dict(zip(keys,row)),ensure_ascii=False)+'\n')
+                    entry = dict(zip(keys,row))
+                    entry['line_reference'] = 'raw-live' if entry['file'] in live_files else 'compact'
+                    output.write(json.dumps(entry,ensure_ascii=False)+'\n')
+                output.flush()
+                os.fsync(output.fileno())
             os.replace(temporary,target)
+            descriptor = os.open(self.root,os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+            try:
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
         finally:
             if temporary is not None:
                 temporary.unlink(missing_ok=True)
@@ -194,6 +209,63 @@ class LogIndex:
         finally:
             self.connection.close()
             os.close(self.guard)
+
+
+class LiveLogReader:
+    """Read only complete new lines; never rewrite files still owned by a runtime."""
+    def __init__(self, index):
+        self.index = index
+        self.positions = {}
+        self.cursor = 0
+
+    def scan(self, paths, max_bytes=8*1024*1024, max_seconds=2):
+        remaining = max_bytes
+        deadline = time.monotonic()+max_seconds
+        pending = []; errors = []
+        paths = sorted(paths)
+        if paths:
+            self.cursor %= len(paths)
+            paths = paths[self.cursor:]+paths[:self.cursor]
+            self.cursor += 1
+        for path in paths:
+            if path.is_symlink():
+                continue
+            file = str(path.relative_to(self.index.root))
+            try:
+                fd = os.open(path,os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+                with os.fdopen(fd,'rb') as source:
+                    info = os.fstat(source.fileno())
+                    if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
+                        continue
+                    position = self.positions.get(file)
+                    changed = (position is None or position['identity'] != (info.st_dev,info.st_ino)
+                               or info.st_size < position['offset'])
+                    if position is not None and not changed and position['head']:
+                        changed = source.read(len(position['head'])) != position['head']
+                    if changed:
+                        with self.index.lock:
+                            self.index.commit()
+                            for key in [key for key in self.index.cache if key[0]==file]:
+                                del self.index.cache[key]
+                            self.index.execute('DELETE FROM messages WHERE file=?',(file,))
+                        position = dict(identity=(info.st_dev,info.st_ino),offset=0,lines=0,head=b'')
+                        self.positions[file] = position
+                    if not position['head'] and info.st_size:
+                        source.seek(0); position['head'] = source.read(min(info.st_size,4096))
+                    source.seek(position['offset'])
+                    while remaining > 0 and time.monotonic() < deadline:
+                        raw = source.readline(min(remaining,1024*1024))
+                        remaining -= len(raw)
+                        if not raw or not raw.endswith(b'\n'):
+                            break  # Keep partial EOF lines for the next snapshot.
+                        self.index.record(file,raw,position['lines']+1)
+                        position['offset'] += len(raw); position['lines'] += 1
+                    if position['offset'] < os.fstat(source.fileno()).st_size:
+                        pending.append(file)
+            except OSError as error:
+                errors.append(dict(file=file,error=str(error)))
+                pending.append(file)
+        return pending,errors
 
 
 def open_writers(root):
@@ -256,7 +328,7 @@ def compact_recording(directory):
         if (root/'events.jsonl').is_file():
             paths.append(root/'events.jsonl')
         pending = compact_files(index, paths)
-        summary = index.export(pending)
+        summary = index.export(pending,live_files=pending)
         metadata['deduplication'] = summary
         with tempfile.NamedTemporaryFile(mode='w',dir=root,encoding='utf-8',delete=False) as output:
             temporary = Path(output.name)

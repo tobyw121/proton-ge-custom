@@ -1,4 +1,7 @@
 import json
+import os
+import subprocess
+import time
 from pathlib import Path
 import tempfile
 import sys
@@ -25,6 +28,136 @@ class DedupTests(unittest.TestCase):
 
     def repetitions(self, recording):
         return [json.loads(line) for line in (recording.path/'repetitions.jsonl').read_text().splitlines()]
+
+    def wait_for(self, predicate, timeout=3):
+        deadline = time.monotonic()+timeout
+        while time.monotonic()<deadline:
+            if predicate():
+                return
+            time.sleep(.01)
+        self.fail('Timed out waiting for a repetitions snapshot')
+
+    def test_file_exists_immediately_and_monitor_updates_on_twenty_second_boundaries(self):
+        class Clock:
+            value = 0
+            observed = threading.Event()
+            def __call__(self):
+                self.observed.set()
+                return self.value
+        clock = Clock()
+        environment = {'WINEPREFIX':str(self.root/'prefix')}
+        log = RunLog(environment,['test.exe'],str(self.root),'standard','b'*32,clock=clock)
+        self.addCleanup(log.close)
+        self.assertEqual((log.path/'repetitions.jsonl').read_bytes(),b'')
+        log.console('stdout','repeat\n'*3)
+        with patch.object(log,'snapshot'):
+            log.start()
+            clock.value=19.9; clock.observed.clear()
+            self.assertTrue(clock.observed.wait(2))
+            self.assertEqual(self.repetitions(log),[])
+            clock.value=20
+            self.wait_for(lambda: bool(self.repetitions(log)))
+            self.assertEqual(self.repetitions(log)[0]['count'],3)
+            log.console('stdout','repeat\n'*2)
+            clock.value=39.9; clock.observed.clear()
+            self.assertTrue(clock.observed.wait(2))
+            self.assertEqual(self.repetitions(log)[0]['count'],3)
+            clock.value=40
+            self.wait_for(lambda:self.repetitions(log)[0]['count']==5)
+            self.assertTrue(log.thread.is_alive())
+            metadata = json.loads((log.path/'session.json').read_text())
+            self.wait_for(lambda:json.loads((log.path/'session.json').read_text())['deduplication']['suppressed_lines']==4)
+            self.assertEqual(metadata['deduplication']['interval_seconds'],20)
+        log.close()
+        self.assertEqual(self.repetitions(log)[0]['count'],5)
+
+    def test_live_native_reader_counts_only_new_complete_lines_without_modifying_file(self):
+        log = self.recording()
+        folder = Path(log.invocation({}))
+        path = folder/'steam-default.log'
+        with path.open('wb') as writer:
+            writer.write(b'1.000:00ab:00cd:trace:repeat\n'*3+b'partial')
+            writer.flush()
+            original = path.read_bytes()
+            log.publish_repetitions()
+            row, = self.repetitions(log)
+            self.assertEqual(row['count'],3)
+            self.assertEqual(row['line_reference'],'raw-live')
+            self.assertEqual(path.read_bytes(),original)
+            log.publish_repetitions()
+            self.assertEqual(self.repetitions(log)[0]['count'],3)
+            writer.write(b' line\n1.100:00ab:00cd:trace:repeat\n');writer.flush()
+            log.publish_repetitions()
+            self.assertEqual(self.repetitions(log)[0]['count'],4)
+        log.close()
+        self.assertEqual(self.repetitions(log)[0]['count'],4)
+        self.assertEqual(self.repetitions(log)[0]['line_reference'],'compact')
+        self.assertEqual(path.read_bytes(),b'1.000:00ab:00cd:trace:repeat\npartial line\n')
+
+    def test_live_read_budget_is_fair_to_other_files(self):
+        log = self.recording()
+        folder = Path(log.invocation({}))
+        large = folder/'a.log'; small = folder/'b.log'
+        large.write_bytes(b'a\n'*100);small.write_bytes(b'b\n'*3)
+        log.live_reader.scan([large,small],max_bytes=8)
+        log.live_reader.scan([large,small],max_bytes=8)
+        log.index.export()
+        counts = {row['file']:row['count'] for row in self.repetitions(log)}
+        self.assertEqual(counts['calls/0001/a.log'],5)
+        self.assertEqual(counts['calls/0001/b.log'],3)
+        self.assertEqual(large.read_bytes(),b'a\n'*100)
+
+    def test_native_log_truncation_resets_live_counts(self):
+        log = self.recording()
+        path = Path(log.invocation({}))/'native.log'
+        path.write_bytes(b'old\n'*100)
+        log.publish_repetitions()
+        self.assertEqual(self.repetitions(log)[0]['count'],100)
+        path.write_bytes(b'new\n'*2)
+        log.publish_repetitions()
+        row, = self.repetitions(log)
+        self.assertEqual(row['count'],2)
+        log.publish_repetitions()
+        self.assertEqual(self.repetitions(log)[0]['count'],2)
+
+    def test_failed_snapshot_replacement_preserves_last_complete_snapshot(self):
+        log = self.recording()
+        log.console('stdout','repeat\n'*5)
+        log.publish_repetitions()
+        previous = (log.path/'repetitions.jsonl').read_bytes()
+        log.console('stdout','repeat\n'*2)
+        with patch('ge_wine_dedup.os.replace',side_effect=OSError('test replace failed')):
+            with self.assertRaisesRegex(OSError,'test replace failed'):
+                log.publish_repetitions()
+        self.assertEqual((log.path/'repetitions.jsonl').read_bytes(),previous)
+        log.close()
+        self.assertEqual(self.repetitions(log)[0]['count'],7)
+
+    def test_last_published_snapshot_survives_sigterm_and_sigkill(self):
+        source = Path(test_launcher.SOURCE).parent
+        code = ("import sys,time;sys.path.insert(0,sys.argv[1]);"
+                "import ge_wine_logging as module;module.REPETITIONS_INTERVAL=.05;"
+                "log=module.RunLog({'WINEPREFIX':sys.argv[2]},['test.exe'],sys.argv[2],'standard','c'*32);"
+                "log.console('stdout',('repeat'+chr(10))*5);log.start();"
+                "print(str(log.path),flush=True);time.sleep(60)")
+        for termination in ('terminate','kill'):
+            with self.subTest(termination=termination):
+                process = subprocess.Popen([sys.executable,'-c',code,str(source),str(self.root/termination)],
+                                           stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+                try:
+                    ready = process.stdout.readline().strip()
+                    if not ready:
+                        self.fail(process.stderr.read())
+                    folder = Path(ready)
+                    target = folder/'repetitions.jsonl'
+                    self.wait_for(lambda:target.exists() and bool(target.read_bytes()))
+                    getattr(process,termination)();process.wait(timeout=5)
+                    rows = [json.loads(line) for line in target.read_text().splitlines()]
+                    self.assertEqual(rows[0]['count'],5)
+                finally:
+                    if process.poll() is None:
+                        process.kill();process.wait()
+                    process.stdout.close();process.stderr.close()
 
     def test_timestamps_are_ignored_but_pid_tid_parameters_and_channels_are_kept(self):
         log = self.recording()
@@ -100,6 +233,20 @@ class DedupTests(unittest.TestCase):
         self.assertEqual(summary['pending'],[])
         self.assertEqual(compact_recording(log.path),summary)
         self.assertEqual(self.repetitions(log)[0]['count'],40)
+
+    def test_retry_keeps_live_line_references_until_native_writer_closes(self):
+        log = self.recording()
+        path = Path(log.invocation({}))/'native.log'
+        with path.open('w') as writer:
+            writer.write('a\na\nb\nb\n');writer.flush()
+            log.close()
+            compact_recording(log.path)
+            self.assertEqual([row['line_reference'] for row in self.repetitions(log)],['raw-live','raw-live'])
+            self.assertEqual([row['line'] for row in self.repetitions(log)],[1,3])
+        compact_recording(log.path)
+        self.assertEqual([row['line_reference'] for row in self.repetitions(log)],['compact','compact'])
+        self.assertEqual([row['line'] for row in self.repetitions(log)],[1,2])
+        self.assertEqual([row['count'] for row in self.repetitions(log)],[2,2])
 
     def test_active_recording_cannot_be_rewritten_by_manual_command(self):
         log = self.recording()

@@ -6,17 +6,21 @@ import os
 from pathlib import Path
 import threading
 import tempfile
+import time
 
 from ge_wine_sessions import TAG, identity
-from ge_wine_dedup import LogIndex, compact_files
+from ge_wine_dedup import LogIndex, LiveLogReader, compact_files
 
 
 def timestamp():
     return datetime.now().astimezone().isoformat(timespec='microseconds')
 
 
+REPETITIONS_INTERVAL = 20
+
+
 class RunLog:
-    def __init__(self, environment, command, directory, profile, token, full_trace=False):
+    def __init__(self, environment, command, directory, profile, token, full_trace=False, clock=time.monotonic):
         prefix = Path(environment['WINEPREFIX'])
         prefix.mkdir(parents=True, exist_ok=True)
         base = prefix / 'logs'
@@ -29,6 +33,9 @@ class RunLog:
             fd = os.open(self.path / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             self.streams[name] = os.fdopen(fd, 'w', encoding='utf-8', buffering=1)
         self.index = LogIndex(self.path)
+        self.live_reader = LiveLogReader(self.index)
+        self.clock = clock
+        self.next_repetitions_export = self.clock()+REPETITIONS_INTERVAL
         self.lines = {"console.log": 0, "events.jsonl": 0}
         self.closed = False
         self.token = token
@@ -54,6 +61,7 @@ class RunLog:
                              coverage='stdout/stderr, direct launches, Wine debug channels; Linux process sampling every 250 ms; no kernel syscall trace')
         self._metadata()
         self.event('recording_start', profile=profile)
+        self.publish_repetitions(scan_native=False)
 
     def _metadata(self):
         temporary = None
@@ -135,12 +143,33 @@ class RunLog:
                 self.event('process_no_longer_observed', pid=row['pid'], start_ticks=row['start_ticks'])
         self.known = current
 
+    def publish_repetitions(self, scan_native=True):
+        backlog,errors = self.live_reader.scan((self.path/'calls').rglob('*.log')) if scan_native else ([],[])
+        for entry in errors:
+            self.event('native_log_scan_error',**entry)
+        with self.lock:
+            for name,output in self.streams.items():
+                output.flush()
+                self.index.checkpoint(name)
+            native_files = list(self.live_reader.positions)
+            summary = self.index.export(native_files,live_files=native_files)
+            summary.update(state='running',updated_at=timestamp(),interval_seconds=REPETITIONS_INTERVAL,
+                           live_indexing_pending=backlog,live_indexing_errors=errors)
+            self.metadata['deduplication'] = summary
+            self._metadata()
+            return summary
+
     def start(self):
         self.snapshot()
         def monitor():
             while not self.done.wait(.25):
                 try:
                     self.snapshot()
+                    current = self.clock()
+                    if current >= self.next_repetitions_export:
+                        self.publish_repetitions()
+                        # Keep the cadence without a burst of catch-up exports after a slow scan.
+                        self.next_repetitions_export += ((self.clock()-self.next_repetitions_export)//REPETITIONS_INTERVAL+1)*REPETITIONS_INTERVAL
                 except OSError as error:
                     self.event('monitor_error', error=str(error))
         self.thread = threading.Thread(target=monitor, daemon=True)
@@ -163,7 +192,10 @@ class RunLog:
                 output.flush()
                 self.index.checkpoint(name)
             pending = compact_files(self.index, (self.path/'calls').rglob('*.log'))
-            summary = self.index.export(pending)
+            backlog,errors = self.live_reader.scan([self.path/file for file in pending]) if pending else ([],[])
+            summary = self.index.export(pending,live_files=pending)
+            summary.update(state='finished',updated_at=timestamp(),interval_seconds=REPETITIONS_INTERVAL,
+                           live_indexing_pending=backlog,live_indexing_errors=errors)
             self.metadata.update(ended=timestamp(), exit_code=result, error=error,
                                  still_observed=list(self.known.values()), deduplication=summary)
             self._metadata()

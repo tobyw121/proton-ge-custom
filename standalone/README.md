@@ -36,8 +36,8 @@ Windows-/GPU-Tests sind darin nicht enthalten.
 ```sh
 bash standalone/build_deb.sh /tmp/ge-wine-dist
 cd /tmp/ge-wine-dist
-sha256sum -c ge-wine_0.12.0_amd64.deb.sha256
-sudo apt install ./ge-wine_0.12.0_amd64.deb
+sha256sum -c ge-wine_0.12.1_amd64.deb.sha256
+sudo apt install ./ge-wine_0.12.1_amd64.deb
 ```
 
 Anschließend im Anwendungsmenü **GE-Wine** öffnen oder:
@@ -608,7 +608,7 @@ wird nur das äußere `time`-Feld beim Vergleich ignoriert.
   Noch offene Schreibzugriffe werden soweit über `/proc` erkennbar berücksichtigt;
   betroffene Dateien bleiben unverändert und stehen in `deduplication.pending`.
   Während des Spielbetriebs können externe Rohlogs deshalb zunächst weiter wachsen.
-- `repetitions.jsonl` enthält beim Abschluss je wiederholter Meldung genau einen
+- `repetitions.jsonl` enthält je wiederholter Meldung genau einen
   Eintrag mit Quelldatei, Zeilennummer im kompakten Log, Gesamtanzahl sowie erstem
   und letztem Auftreten. Die Meldung wird darin nicht nochmals kopiert. Bei externen
   Dateien sind `first_seen`/`last_seen` Verarbeitungszeiten; originale Zeitpräfixe
@@ -638,3 +638,34 @@ Aufzeichnungen werden abgelehnt. Gleichzeitige Kompaktierungen sind gesperrt.
 Unveränderte, bereits kompaktierte Dateien werden nicht erneut gezählt. Eine
 zwischenzeitlich ersetzte oder geänderte Datei wird als neue Dateigeneration
 eingelesen; deren alte Wiederholungszähler werden dabei ersetzt.
+
+
+## Laufende Wiederholungsübersicht ab 0.12.1
+
+`repetitions.jsonl` wird bereits beim Start einer Aufzeichnung angelegt, zunächst
+ggf. leer. Während der laufenden GE-Wine-Sitzung wird die Datei im 20-Sekunden-Takt
+aktualisiert, auch wenn keine neuen Wiederholungen hinzukommen. Beim regulären
+Abschluss erfolgt zusätzlich ein letzter Export. Der Speicherort bleibt der
+datierte Startordner innerhalb von `<Prefix>/logs/`.
+
+Jeder Export schreibt zunächst eine vollständige temporäre Datei, synchronisiert
+sie und ersetzt dann atomar `repetitions.jsonl`. Ein SIGTERM/SIGKILL oder ein Absturz
+des GE-Wine-Steuerprozesses lässt daher den letzten vollständig veröffentlichten
+Zwischenstand zurück. Die seitdem neu aufgetretenen Meldungen sind darin noch
+nicht enthalten. Nach dem Tod des Loggers erfolgen keine weiteren Aktualisierungen.
+
+Auch Proton-/DXVK-Dateien werden während des Laufs inkrementell und ausschließlich
+lesend ausgewertet. Bereits erfasste Zeilen werden nicht erneut gezählt; unvollständige
+letzte Zeilen folgen erst nach ihrem Zeilenumbruch. Offene Rohdateien bleiben dabei
+unverändert. Bei vielen bzw. sehr großen Dateien begrenzen 8 MiB und ungefähr zwei
+Sekunden Lesezeit je Durchlauf die Zusatzlast; die Dateien kommen abwechselnd an
+die Reihe. Dadurch können deren Live-Zähler nachlaufen. `live_indexing_pending`
+zeigt noch nicht vollständig eingelesene Dateien, `live_indexing_errors` Lesefehler.
+Beim Abschluss werden geschlossene Rohdateien weiterhin vollständig kompaktiert.
+
+In `session.json` stehen unter `deduplication` jetzt auch `updated_at`,
+`interval_seconds: 20` und der Zustand beim Export (`running`/`finished`).
+Die tatsächliche Ausführung kann unter hoher System-/Datenträgerlast verzögert sein.
+`line_reference: raw-live` in der Wiederholungsübersicht verweist auf die Zeile der
+noch offenen Rohdatei. `line_reference: compact` verweist auf eine bereits
+kompaktierte Datei, insbesondere die laufend gefilterte Konsole.
