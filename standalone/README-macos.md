@@ -64,6 +64,7 @@ GE-Memory und der Linux-Speedhack sind nicht Bestandteil des Mac-Pakets.
 
 GitHub Actions baut DMG/ZIP für Intel und Apple Silicon. Auf Intel führt der Build
 zusätzlich eine minimale Windows-x64-Konsolen-EXE durch Wine aus (ExitProcess(42));
-Multimedia/GStreamer wird von diesem Test nicht verwendet oder als getestet ausgegeben. Auf ARM
+Der Konsolentest deaktiviert den Mac-Grafiktreiber auf dem CI-Runner.
+Grafik und Multimedia/GStreamer werden davon nicht als getestet ausgegeben. Auf ARM
 wird das native Frontend gebaut/geprüft; ein Spiele-/Rosetta-Lauf wird damit nicht
 behauptet. Icarus und dessen Anti-Cheat werden durch diesen Build nicht getestet.
