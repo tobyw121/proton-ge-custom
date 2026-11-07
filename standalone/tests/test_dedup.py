@@ -42,8 +42,9 @@ class DedupTests(unittest.TestCase):
             value = 0
             observed = threading.Event()
             def __call__(self):
+                value = self.value
                 self.observed.set()
-                return self.value
+                return value
         clock = Clock()
         environment = {'WINEPREFIX':str(self.root/'prefix')}
         log = RunLog(environment,['test.exe'],str(self.root),'standard','b'*32,clock=clock)
@@ -58,6 +59,7 @@ class DedupTests(unittest.TestCase):
             clock.value=20
             self.wait_for(lambda: bool(self.repetitions(log)))
             self.assertEqual(self.repetitions(log)[0]['count'],3)
+            self.wait_for(lambda:log.next_repetitions_export==40)
             log.console('stdout','repeat\n'*2)
             clock.value=39.9; clock.observed.clear()
             self.assertTrue(clock.observed.wait(2))
