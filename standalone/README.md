@@ -531,41 +531,61 @@ Dies grenzt numerische Kandidaten ein; daraus lässt sich keine verlässliche Be
 einer Spielvariable oder ein serverseitiger Wert ableiten.
 
 
-## Speedhack ab 0.11.0 (experimentell)
+## Speedhack (experimentell)
 
-1. In GE-Memory **Programm starten …** anklicken und die EXE auswählen.
-   GE-Memory startet GE-Wine mit Speedhack-Unterstützung im Hintergrund. Es ist
-   kein Terminalbefehl und kein zusätzliches GE-Wine-Fenster nötig.
-2. Der gestartete Prozess wird automatisch ausgewählt, sobald seine Zeitbibliothek
-   bereit ist; ein später gestarteter eindeutiger Spielprozess wird ebenfalls erkannt.
-   Bei mehreren uneindeutigen Kandidaten den Prozess selbst auswählen. Die Speedhack-Steuerung
-   steht direkt unter der Prozessauswahl; „Speedhack …“ öffnet zusätzlich die Details.
-3. Faktor eingeben und „Speedhack aktiv“ einschalten oder „Faktor anwenden“ wählen.
-   Ausschalten setzt den Prozess auf 1× zurück und behält den gewählten Faktor für
-   erneutes Aktivieren. Änderungen des Faktors mit „Faktor anwenden“ bestätigen. Schnellwahl: 0,5× / 1× / 2×; erlaubt sind
-   0,05× bis 20×. „Zurück auf 1×“ stellt die normale Zeitrate wieder her.
-4. Die Anzeige unterscheidet angeforderte und von der Zeitbibliothek bestätigte
-   Faktoren. Eine Bestätigung bedeutet, dass abgefangene Zeitabfragen skaliert werden;
-   die Wirkung auf das konkrete Spiel muss separat geprüft werden.
+Für bereits laufende Programme unter Linux:
 
-Wenn bereits ein Prozess ausgewählt ist, übernimmt der Programmstart dessen
-Prefix, Protonpfad und Spielkennung. Ohne Auswahl gelten die automatischen
-GE-Wine-Profilvorgaben. Bei einem bereits ohne Zeitbibliothek laufenden Spiel ist
-einmaliges Beenden und Starten über diesen Button erforderlich; es erfolgt keine
-nachträgliche Injektion oder automatische Beendigung des laufenden Spiels.
-Startdiagnosen liegen unter `~/.local/state/ge-memory/launches/` (bzw.
-`$XDG_STATE_HOME/ge-memory/launches/`), detaillierte Instanzlogs weiterhin im Prefix.
-Die automatische Auswahl berücksichtigt nur Prozesse dieses konkreten Starts;
-eine manuelle Prozessauswahl beendet die automatische Auswahl.
+1. Den Spielprozess in GE-Memory auswählen.
+2. Faktor eingeben und **Speedhack aktiv** einschalten.
+3. GE-Memory lädt die Zeitbibliothek bei Bedarf nach und verbindet sie mit den
+   unterstützten Zeitimporten. Kein vorbereiteter Start ist für diesen Weg nötig.
+4. Ausschalten setzt auf 1× zurück; der gewünschte Faktor bleibt erhalten.
+   Änderungen mit **Faktor anwenden** bestätigen. Erlaubt sind 0,05× bis 20×.
 
-Alle vorbereiteten Prozesse starten zunächst bei 1×. Nur die ausgewählte PID wird
-geändert. Beim regulären Schließen von GE-Memory werden die von diesem Fenster
-geänderten Faktoren auf 1× angefordert. Beim Ende des GE-Wine-Starts werden noch
-lebende vorbereitete Prozesse ebenfalls auf 1× zurückgesetzt und die Steuerdateien
-entfernt. Ein harter Abbruch von GE-Memory kann den Faktor bis zum manuellen Reset
-oder dem Ende der GE-Wine-Sitzung aktiv lassen.
+Das Einklinken läuft im Hintergrund über den mitgelieferten Paketbestandteil GDB.
+Es verwendet ausschließlich eigene Prozesse und die normalen Linux-Debuggerrechte.
+Prozess-ID und Startkennung werden vor dem Laden auch im angehaltenen Ziel geprüft.
+Zugriffsverweigerungen durch Linux/Yama, Container oder andere Schutzmechanismen
+werden angezeigt; GE-Memory ändert keine Schutzregeln und erhöht keine Rechte.
+Das Einklinken kann den Zielprozess kurz unterbrechen und ist experimentell.
 
-CLI-Steuerung (PID ersetzen):
+**Abdeckung:** Nachträgliches Einklinken unterstützt dynamisch gelinkte Linux-
+x86-64-Prozesse mit bereits geladenen ELF-Importen von `clock_gettime` (PLT/GOT).
+Die ursprünglichen Seitenschutzrechte werden nach der Anpassung wiederhergestellt.
+Es gibt keine Änderung von vDSO, Funktionsprologen oder Anti-Cheat-Komponenten.
+Bereits gespeicherte Funktionszeiger, direkte Systemaufrufe, statische Programme,
+später neu geladene Module und native 32-Bit-Ziele werden damit nicht vollständig
+abgedeckt. Dass eine Bibliothek geladen ist oder Zeitimporte gefunden wurden,
+beweist noch keine Wirkung im jeweiligen Spiel. Die Anzeige unterscheidet
+angeforderte und durch Zeitabfragen bestätigte Faktoren.
+Icarus-/UMU-Echtbetrieb und Anti-Cheat-Kompatibilität sind nicht bestätigt.
+
+Alternativ kann **Programm starten …** die EXE weiterhin direkt über GE-Wine mit
+vorbereiteter Zeitbibliothek starten (auch native 32-Bit-Laufzeiten). Dann werden
+unterstützte Zeitimporte bereits beim Start gebunden. Der gestartete Prozess wird
+automatisch ausgewählt, sobald seine Zeitbibliothek bereit ist; ein später
+startender eindeutiger Spielprozess wird ebenfalls erkannt. Bei mehreren
+Kandidaten selbst auswählen. Eine manuelle Auswahl beendet diese Automatik.
+Ein ausgewählter bestehender Prozess liefert für diesen Programmstart Prefix,
+Protonpfad und Spielkennung; ohne Auswahl gelten die GE-Wine-Profilvorgaben.
+Startdiagnosen liegen unter `~/.local/state/ge-memory/launches/` bzw.
+`$XDG_STATE_HOME/ge-memory/launches/`, Instanzlogs weiterhin im Prefix.
+
+Beide Wege skalieren `CLOCK_MONOTONIC` und `CLOCK_MONOTONIC_RAW` pro Prozess.
+Der akkumulierte virtuelle Zeitwert bleibt beim Faktorwechsel erhalten.
+Systemuhr, Kalenderzeit und andere Prozesse bleiben unverändert. Direkte CPU-Zähler,
+Wine-GetTickCount aus gemeinsamem Serverspeicher, eigene Engine-Timer, Warteaufrufe
+und serverseitige Spielzeit werden nicht vollständig skaliert. Gemischte Zeitquellen
+können die Kompatibilität beeinträchtigen.
+
+Beim regulären Schließen von GE-Memory werden geänderte Faktoren auf 1× zurückgesetzt.
+Die nachgeladene Bibliothek und die gebundenen Importe bleiben bis zum Prozessende
+vorhanden; Deaktivieren bedeutet normale Zeitrate, kein unsicheres Entladen.
+Ein harter Abbruch kann den Faktor bis zum manuellen Reset oder Prozessende aktiv
+lassen. Beim vorbereiteten GE-Wine-Start stellt zusätzlich dessen Sitzungsende 1×
+wieder her; für nachträglich verbundene Prozesse gilt diese Zusatzsicherung nicht.
+
+CLI-Steuerung für bereits verbundene/vorbereitete Prozesse:
 
 ```bash
 ge-memory --pid 12345 --speed 2
@@ -573,39 +593,20 @@ ge-memory --pid 12345 --speed-status
 ge-memory --pid 12345 --speed 1
 ```
 
-Die CLI meldet den aktuellen Zustand als JSON; eine noch ausstehende Übernahme
-ist `pending: true`. CLI-Anforderungen bleiben über das Ende des CLI-Befehls hinaus
-aktiv, bis sie zurückgesetzt werden oder der GE-Wine-Start endet.
+Die CLI meldet den Zustand als JSON (`pending: true` bis zur nächsten unterstützten
+Zeitabfrage). Steuerdateien sind benutzerprivat und an PID/Startkennung gebunden.
+Bei nachträglicher Verbindung steht der Registrierungseintrag unter
+`$XDG_STATE_HOME/ge-wine/attached-speed/` (Standard `~/.local/state/`), Bibliothek,
+Steuerdatei und `commands.jsonl` in einem privaten `/tmp/ge-memory-attach-*`-Ordner
+des Zielprozesses. Diese Dateien werden während der Prozesslaufzeit nicht entfernt.
+Beim vorbereiteten Start archiviert GE-Wine die Faktoranforderungen als
+`speed-commands.jsonl` im datierten Instanzlog und entfernt den Steuerordner am Ende.
 
-Technik und Abdeckung: Eine beim Start sichtbare `LD_PRELOAD`-Bibliothek für 64- und
-32-Bit-Linux skaliert `clock_gettime(CLOCK_MONOTONIC/CLOCK_MONOTONIC_RAW)` pro Prozess.
-Sie erhält den akkumulierten virtuellen Zeitwert bei Faktorwechseln, statt die
-Systemlaufzeit mit dem neuen Faktor zu multiplizieren. Systemuhr, Kalenderzeit und
-andere Prozesse bleiben unverändert. Die Steuerdateien sind benutzerprivat und an
-PID plus Linux-Prozessstartkennung gebunden. Host- und Runtime-PIDs werden über
-`NSpid` zugeordnet, falls die Runtime einen eigenen PID-Namensraum verwendet.
-Es gibt keine nachträgliche Injektion,
-Tarnung oder Änderung von ptrace-/Kernel-Schutzregeln.
-
-Wine kann seine Performance-Counter über diese Uhren abfragen. Direkte CPU-Zähler,
-Wine-GetTickCount aus gemeinsamem Serverspeicher, eigene Engine-Timer, Warteaufrufe
-und serverseitige Spielzeit werden dadurch nicht vollständig skaliert. Gemischte
-Zeitquellen können die Kompatibilität beeinträchtigen. Statische Programme sowie
-Umgebungen, die LD_PRELOAD entfernen (z. B. bestimmte UMU-Gamescope-Sitzungen),
-können nicht vorbereitet sein; GE-Memory zeigt dann die fehlende Bibliothek an.
-Diese Implementierung ist kein garantierter Speedhack für jedes Wine-Spiel.
-Der Icarus-/UMU-Echtbetrieb ist in dieser Cloud-Umgebung nicht getestet.
-
-GE-Wine protokolliert die Vorbereitung in `events.jsonl` und archiviert
-Faktoranforderungen in `speed-commands.jsonl` im datierten Startordner. Während
-des Starts liegen Bibliotheken und Steuerdateien in einem privaten `/tmp`-Ordner,
-der an die Steam-Runtime weitergereicht und bei regulärem Ende entfernt wird.
-
-Für den Quellbau werden zusätzlich `gcc-multilib` und `libc6-dev-i386` benötigt.
-`bash standalone/build_speed.sh /pfad/ausgabe` erzeugt beide Architekturen; der
-Paketbau führt dies automatisch aus. Für Entwicklung ohne installierte Anwendung
-lässt sich `GE_WINE_SPEED_LIBRARY_DIR=/pfad/ausgabe` setzen. Die Bibliotheksquellen
-und das Buildskript liegen auch unter `/usr/share/doc/ge-wine/`.
+Für den Quellbau werden `gcc-multilib` und `libc6-dev-i386`, für das Einklinken GDB
+mit Python-Unterstützung benötigt. `build_speed.sh` baut beide Bibliotheksarchitekturen
+und beide C-Quelldateien; der Paketbau erledigt dies automatisch. Für Entwicklung
+lässt sich `GE_WINE_SPEED_LIBRARY_DIR=/pfad/ausgabe` setzen. Die Quellen liegen auch
+unter `/usr/share/doc/ge-wine/speed/`. GE-Memory/Speedhack sind Linux-Funktionen.
 
 
 ## Duplikatfreie Logs ab 0.12.0

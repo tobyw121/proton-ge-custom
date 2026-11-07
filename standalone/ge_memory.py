@@ -17,7 +17,7 @@ import tempfile
 import uuid
 
 from ge_wine_sessions import identity
-from ge_speed import SpeedControl, validate_factor
+from ge_speed import SpeedControl, validate_factor, attach_speed
 
 TYPES = {'Int8': '<b', 'UInt8': '<B', 'Int16': '<h', 'UInt16': '<H',
          'Int32': '<i', 'UInt32': '<I', 'Int64': '<q', 'UInt64': '<Q',
@@ -571,7 +571,7 @@ def gui(initial_pid=None):
     aligned = tk.BooleanVar(value=True); shared = tk.BooleanVar(value=False)
     type_filter = tk.StringVar(value='Alle Typen'); page_text = tk.StringVar(); selection_text = tk.StringVar(value='Treffer auswählen, um einen Wert zu bearbeiten.')
     live_enabled = tk.BooleanVar(value=True)
-    speed_target = None; speed_modified = {}
+    speed_target = None; speed_modified = {}; speed_attaching = False
     speed_launches = {}; next_launch_scan = 0
     speed_enabled = tk.BooleanVar(value=False)
     speed_factor = tk.StringVar(value='2'); speed_status = tk.StringVar(value='Zuerst einen Prozess auswählen.')
@@ -655,6 +655,11 @@ def gui(initial_pid=None):
 
     def refresh_speed():
         nonlocal speed_target
+        if speed_attaching:
+            speed_status.set('Mit laufendem Prozess verbinden …')
+            for widget in (speed_apply, speed_reset, speed_toggle, speed_inline_toggle, speed_inline_apply, *speed_presets):
+                widget.configure(state='disabled')
+            return
         if memory is None:
             speed_target = None; speed_enabled.set(False); speed_status.set('Zuerst einen Prozess auswählen.'); speed_title.set('Kein Zielprozess')
         else:
@@ -672,16 +677,36 @@ def gui(initial_pid=None):
                     speed_status.set(f"{'Aktiv' if info['requested'] != 1 else 'Deaktiviert'} · Faktor {info['applied']:g}× von der Zeitbibliothek bestätigt.\nZeitabfragen: {info['calls']} · Wirkung im Spiel bitte prüfen.")
             except (OSError, ValueError) as error:
                 speed_target = None; speed_enabled.set(False)
-                speed_status.set('Keine erreichbare Zeitbibliothek. Über „Programm starten …“ hier in GE-Memory neu starten.\n' + str(error))
+                speed_status.set('Speedhack aktivieren, um sich mit dem laufenden Prozess zu verbinden.\n' + str(error))
         for widget in (speed_apply, speed_reset, speed_toggle, speed_inline_toggle, speed_inline_apply, *speed_presets):
-            widget.configure(state='normal' if speed_target is not None and not busy else 'disabled')
+            widget.configure(state='normal' if memory is not None and not busy else 'disabled')
+
+    def connect_speed(factor):
+        nonlocal speed_attaching
+        if memory is None or speed_attaching:return
+        pid,stamp=memory.pid,memory.stamp
+        speed_attaching=True;refresh_speed()
+        def connect():
+            try:
+                controller=attach_speed(pid,expected_stamp=stamp)
+                events.put(('speed_attach_ready',(pid,stamp,controller,factor,None)))
+            except (OSError,ValueError) as error:
+                events.put(('speed_attach_ready',(pid,stamp,None,factor,error)))
+        threading.Thread(target=connect,daemon=True).start()
 
     def set_speed(reset=False, preserve_factor=False):
         try:
             if memory is None:
                 raise ValueError('Zuerst einen Prozess auswählen.')
-            controller = SpeedControl(memory.pid)
             factor = 1 if reset else validate_factor(speed_factor.get())
+            try:
+                controller = SpeedControl(memory.pid,expected_stamp=memory.stamp)
+            except ValueError:
+                if reset:
+                    speed_enabled.set(False)
+                    return
+                connect_speed(factor)
+                return
             controller.set(factor)
             speed_modified[(controller.pid, controller.stamp)] = controller
             if not preserve_factor:
@@ -998,12 +1023,30 @@ def gui(initial_pid=None):
     root.bind('<Control-f>', lambda event:search_entry.focus_set())
 
     def poll():
-        nonlocal busy, results, live, watching, next_launch_scan
+        nonlocal busy, results, live, watching, next_launch_scan, speed_attaching
         for _ in range(200):
             try:
                 action,data = events.get_nowait()
             except queue.Empty:
                 break
+            if action=='speed_attach_ready':
+                pid,stamp,controller,factor,error=data
+                speed_attaching=False
+                if error is not None:
+                    refresh_speed()
+                    messagebox.showerror('Speedhack verbinden',str(error))
+                elif memory is not None and memory.pid==pid and memory.stamp==stamp:
+                    try:
+                        controller.set(factor)
+                        speed_modified[(controller.pid,controller.stamp)]=controller
+                        speed_factor.set(f'{factor:g}')
+                    except (OSError,ValueError) as error:
+                        messagebox.showerror('Speedhack',str(error))
+                    refresh_speed()
+                else:
+                    refresh_speed()
+                    status.set(f'Zeitbibliothek mit PID {pid} verbunden; wegen geänderter Auswahl bei 1× belassen.')
+                continue
             if action=='speed_launch_output':
                 token,line=data
                 if token in speed_launches:

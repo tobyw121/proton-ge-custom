@@ -10,7 +10,7 @@ import unittest
 from unittest.mock import patch
 
 import test_launcher
-from ge_speed import SpeedSession, SpeedControl, validate_factor
+from ge_speed import SpeedSession, SpeedControl, validate_factor, attach_speed, attachment_record
 from ge_wine_sessions import identity
 
 PROBE = r'''
@@ -18,11 +18,13 @@ PROBE = r'''
 #include <stdio.h>
 #include <time.h>
 #include <unistd.h>
+#include <sys/prctl.h>
 static long long ns(clockid_t clock) {
  struct timespec ts; if(clock_gettime(clock,&ts)) return -1;
  return (long long)ts.tv_sec*1000000000LL+ts.tv_nsec;
 }
 int main(void) {
+ prctl(PR_SET_PTRACER,(unsigned long)getppid(),0,0,0);
  char command[20];
  printf("%ld\n",(long)getpid()); fflush(stdout);
  while(fgets(command,sizeof(command),stdin)) {
@@ -52,7 +54,7 @@ class SpeedTests(unittest.TestCase):
             directory = cls.root / ('lib'+architecture)
             directory.mkdir()
             result = subprocess.run(['gcc','-m'+architecture,'-std=gnu11','-Wall','-Wextra','-Werror','-O2','-shared','-fPIC',
-                                     str(source),'-ldl','-pthread','-o',str(directory/'libge_speed.so')],capture_output=True,text=True)
+                                     str(source),str(source.with_name('ge_attach.c')),'-ldl','-pthread','-o',str(directory/'libge_speed.so')],capture_output=True,text=True)
             if result.returncode:
                 if architecture == '64':
                     raise RuntimeError(result.stderr)
@@ -278,6 +280,72 @@ class SpeedTests(unittest.TestCase):
         launch.assert_called_once_with(str(self.root/'probe64'),None,None)
         self.assertEqual(failures,[])
 
+    @unittest.skipUnless(shutil.which('gdb'),'Requires GDB for late attachment')
+    def test_attach_to_running_unprepared_process_scales_and_disables_without_restart(self):
+        env=dict(os.environ);env.pop('GE_WINE_SPEED_DIR',None);env.pop('LD_PRELOAD',None)
+        process=subprocess.Popen([str(self.root/'probe64')],env=env,stdin=subprocess.PIPE,
+                                 stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+        self.addCleanup(lambda:process.poll() is None and process.kill())
+        try:
+            self.assertEqual(int(process.stdout.readline()),process.pid)
+            self.measure(process,1)
+            with patch.dict(os.environ,XDG_STATE_HOME=str(self.root/'attached-state')):
+                control=attach_speed(process.pid,libraries=self.root)
+                self.assertGreater(json.loads(attachment_record(process.pid,control.stamp).read_text())['hooks'],0)
+                control.set(2);self.measure(process,2)
+                # A new controller discovers the attachment without an inherited environment variable.
+                reopened=SpeedControl(process.pid)
+                reopened.set(.5);self.measure(process,.5)
+                reopened.set(1);self.measure(process,1)
+                self.assertIsNone(process.poll())
+                self.assertEqual(attach_speed(process.pid,libraries=self.root).path,control.path)
+        finally:
+            process.kill();process.wait()
+            process.stdin.close();process.stdout.close();process.stderr.close()
+
+    @unittest.skipUnless(os.environ.get('DISPLAY') and shutil.which('gdb'),'Requires X display and GDB')
+    def test_gui_checkbox_attaches_to_running_unprepared_process(self):
+        import tkinter as tk
+        import ge_memory
+        env=dict(os.environ,WINEPREFIX=str(self.root/'late-gui-prefix'))
+        env.pop('GE_WINE_SPEED_DIR',None);env.pop('LD_PRELOAD',None)
+        process=subprocess.Popen([str(self.root/'probe64')],env=env,stdin=subprocess.PIPE,
+                                 stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+        original=tk.Tk;failures=[]
+        self.assertEqual(int(process.stdout.readline()),process.pid)
+        def factory():
+            root=original()
+            def finish():
+                for timer in root.tk.call('after','info'):root.after_cancel(timer)
+                root.tk.call(root.protocol('WM_DELETE_WINDOW'))
+            def check(attempt=0):
+                try:
+                    widgets=root.memory_widgets
+                    if not widgets['speed_enabled'].get() or widgets['speed_toggle'].instate(['disabled']):
+                        if attempt>=100:raise AssertionError('GUI attachment did not finish')
+                        root.after(100,lambda:check(attempt+1));return
+                    self.measure(process,2)
+                    widgets['speed_toggle'].invoke();self.measure(process,1)
+                    widgets['speed_toggle'].invoke();self.measure(process,2)
+                except Exception as error:failures.append(str(error))
+                finish()
+            def start():
+                widgets=root.memory_widgets
+                widgets['speed_factor'].set('2');widgets['speed_toggle'].invoke()
+                root.after(100,check)
+            root.after(100,start)
+            return root
+        try:
+            with patch.dict(os.environ,GE_WINE_SPEED_LIBRARY_DIR=str(self.root),XDG_STATE_HOME=str(self.root/'late-gui-state')), \
+                 patch('tkinter.Tk',factory), \
+                 patch('tkinter.messagebox.showerror',side_effect=lambda *args:failures.append(str(args))):
+                ge_memory.gui(process.pid)
+            self.assertEqual(failures,[])
+            self.measure(process,1)
+        finally:
+            process.kill();process.wait()
+            process.stdin.close();process.stdout.close();process.stderr.close()
+
     def test_pid_namespace_mapping_and_session_reset(self):
         process, original, session = self.spawn('64')
         namespace_pid = process.pid + 1000000
@@ -310,6 +378,13 @@ class SpeedTests(unittest.TestCase):
             SpeedControl(process.pid, session.path, expected_stamp='stale')
         self.assertEqual(control.stamp,identity(process.pid))
 
+    def test_attachment_rejects_stale_identity_before_starting_debugger(self):
+        process,control,_=self.spawn('64')
+        with patch('ge_speed.subprocess.Popen') as debugger:
+            with self.assertRaises(ProcessLookupError):
+                attach_speed(process.pid,expected_stamp='stale',libraries=self.root)
+            debugger.assert_not_called()
+
     def test_unprepared_process_is_reported_without_injection(self):
-        with self.assertRaisesRegex(ValueError,'neu über GE-Wine'):
+        with self.assertRaisesRegex(ValueError,'noch nicht verbunden'):
             SpeedControl(os.getpid())

@@ -7,5 +7,5 @@ for architecture in 64 32; do
     mkdir -p "$output_dir/lib$architecture"
     gcc -m"$architecture" -std=gnu11 -O2 -Wall -Wextra -Werror -fPIC -shared \
         -Wl,-z,relro,-z,now -o "$output_dir/lib$architecture/libge_speed.so" \
-        "$source_dir/speed/ge_speed.c" -ldl -pthread
+        "$source_dir/speed/ge_speed.c" "$source_dir/speed/ge_attach.c" -ldl -pthread
 done

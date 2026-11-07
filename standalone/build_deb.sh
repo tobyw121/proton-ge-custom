@@ -28,6 +28,7 @@ install -Dm644 "$build_dir/umu-source/LICENSE" "$stage/usr/share/doc/ge-wine/UMU
 install -Dm644 "$source_dir/README-macos.md" "$stage/usr/share/doc/ge-wine/README-macos.md"
 install -Dm644 "$source_dir/README.md" "$stage/usr/share/doc/ge-wine/README.md"
 install -Dm644 "$source_dir/speed/ge_speed.c" "$stage/usr/share/doc/ge-wine/speed/ge_speed.c"
+install -Dm644 "$source_dir/speed/ge_attach.c" "$stage/usr/share/doc/ge-wine/speed/ge_attach.c"
 install -Dm644 "$source_dir/build_speed.sh" "$stage/usr/share/doc/ge-wine/build_speed.sh"
 install -Dm644 "$source_dir/build_deb.sh" "$stage/usr/share/doc/ge-wine/build_deb.sh"
 # Retain corresponding UMU source, build files and license for redistribution.
@@ -95,12 +96,12 @@ StartupNotify=false
 EOF
 cat > "$stage/DEBIAN/control" <<'EOF'
 Package: ge-wine
-Version: 0.13.3
+Version: 0.14.0
 Architecture: amd64
 Maintainer: GE-Wine contributors <ge-wine@example.invalid>
 Section: utils
 Priority: optional
-Depends: python3 (>= 3.12), python3-tk, python3-xlib, python3-urllib3 (>= 2.0), python3-truststore, ca-certificates, xz-utils, tar, libvulkan1, cabextract, unzip, wget
+Depends: gdb, python3 (>= 3.12), python3-tk, python3-xlib, python3-urllib3 (>= 2.0), python3-truststore, ca-certificates, xz-utils, tar, libvulkan1, cabextract, unzip, wget
 Description: Desktop and command-line frontend for GE-Proton through UMU
  Includes a private UMU backend. GE-Proton and the Steam Linux Runtime
  are downloaded on first launch. A separate Wine installation is not needed.
@@ -108,6 +109,6 @@ EOF
 find "$stage" -type d -exec chmod 755 {} +
 find "$stage" -type f -exec chmod 644 {} +
 chmod 755 "$stage/usr/bin/ge-wine" "$stage/usr/bin/ge-memory"
-dpkg-deb --root-owner-group --build "$stage" "$output_dir/ge-wine_0.13.3_amd64.deb"
-(cd "$output_dir" && sha256sum ge-wine_0.13.3_amd64.deb > ge-wine_0.13.3_amd64.deb.sha256)
-printf 'Package: %s/ge-wine_0.13.3_amd64.deb\n' "$output_dir"
+dpkg-deb --root-owner-group --build "$stage" "$output_dir/ge-wine_0.14.0_amd64.deb"
+(cd "$output_dir" && sha256sum ge-wine_0.14.0_amd64.deb > ge-wine_0.14.0_amd64.deb.sha256)
+printf 'Package: %s/ge-wine_0.14.0_amd64.deb\n' "$output_dir"

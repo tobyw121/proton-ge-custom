@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later
- * Opt-in per-process clock scaling. No attachment, code patching or concealment.
+ * Per-process clock scaling, with explicit ELF-import rebinding for late attachment.
  */
 #define _GNU_SOURCE
 #include <dlfcn.h>
@@ -28,6 +28,7 @@ static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 static int (*real_clock)(clockid_t, struct timespec *);
 static pid_t owner;
 static int initialized, adjusted;
+static char attached_directory[PATH_MAX];
 static uint64_t sequence;
 static double factor = 1.0;
 static long double real_anchor[2], virtual_anchor[2];
@@ -71,7 +72,7 @@ static void prepare_process(void) {
         raw_clock(clock_id(i), &ts);
         real_anchor[i] = virtual_anchor[i] = nanos(ts);
     }
-    const char *directory = getenv("GE_WINE_SPEED_DIR");
+    const char *directory = attached_directory[0] ? attached_directory : getenv("GE_WINE_SPEED_DIR");
     uint64_t start = start_ticks();
     if (!directory || !start) return;
     char path[PATH_MAX];
@@ -118,7 +119,7 @@ __attribute__((constructor)) static void initialize(void) {
     __atomic_store_n(&initialized, 1, __ATOMIC_RELEASE);
 }
 
-int clock_gettime(clockid_t id, struct timespec *ts) {
+static int scaled_clock_gettime(clockid_t id, struct timespec *ts) {
     int index = slot(id);
     if (!__atomic_load_n(&initialized, __ATOMIC_ACQUIRE) || index < 0)
         return raw_clock(id, ts);
@@ -168,12 +169,30 @@ int clock_gettime(clockid_t id, struct timespec *ts) {
     return result;
 }
 
+int clock_gettime(clockid_t id, struct timespec *ts) { return scaled_clock_gettime(id,ts); }
+
+int ge_speed_rebind(void *replacement);
+/* Called explicitly after dlopen by the debugger. Returns the number of rebound imports. */
+int ge_speed_attach(const char *directory) {
+    if (!directory || strlen(directory)>=sizeof(attached_directory)) return -3;
+    struct stat info;
+    if (lstat(directory,&info) || !S_ISDIR(info.st_mode) || info.st_uid!=geteuid() || (info.st_mode&077)) return -3;
+    pthread_mutex_lock(&lock);
+    if (control) { pthread_mutex_unlock(&lock); return -4; }
+    strcpy(attached_directory,directory);
+    prepare_process();
+    int ready=control!=NULL;
+    pthread_mutex_unlock(&lock);
+    if (!ready) return -3;
+    return ge_speed_rebind((void *)scaled_clock_gettime);
+}
+
 #if __SIZEOF_POINTER__ == 4
 /* glibc's 64-bit time ABI used by newer 32-bit applications. */
 struct ge_timespec64 { int64_t tv_sec, tv_nsec; };
 int __clock_gettime64(clockid_t id, struct ge_timespec64 *ts) {
     struct timespec native;
-    int result = clock_gettime(id, &native);
+    int result = scaled_clock_gettime(id, &native);
     if (!result) { ts->tv_sec = native.tv_sec; ts->tv_nsec = native.tv_nsec; }
     return result;
 }

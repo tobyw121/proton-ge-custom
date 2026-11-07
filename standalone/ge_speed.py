@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Explicit, launch-time clock control; never inject into an existing process."""
+"""Explicit clock control for prepared processes and user-authorized debugger attachment."""
 import fcntl
 import json
 import math
@@ -9,10 +9,12 @@ from pathlib import Path
 import shutil
 import stat
 import struct
+import subprocess
+import signal
 import tempfile
 from datetime import datetime
 
-from ge_wine_sessions import identity
+from ge_wine_sessions import identity, records_directory
 
 MAGIC = b'GESPD01\0'
 SIZE = 64
@@ -83,6 +85,94 @@ class SpeedSession:
             shutil.rmtree(self.path)
 
 
+def attachment_record(pid, stamp):
+    directory=records_directory().parent/'attached-speed'
+    directory.mkdir(exist_ok=True,mode=0o700)
+    return directory/f'{pid}-{stamp}.json'
+
+
+def attached_directory(pid, stamp):
+    path=attachment_record(pid,stamp)
+    try:
+        info=path.lstat()
+        if not stat.S_ISREG(info.st_mode) or info.st_uid!=os.getuid() or info.st_mode&0o077:
+            raise ValueError('Ungültiger Speedhack-Anhängeeintrag.')
+        data=json.loads(path.read_text())
+        if data['pid']!=pid or data['start_ticks']!=stamp:
+            raise ValueError('Speedhack-Prozesskennung stimmt nicht überein.')
+        return data['directory']
+    except FileNotFoundError:
+        return None
+    except (KeyError,TypeError) as error:
+        raise ValueError('Ungültiger Speedhack-Anhängeeintrag.') from error
+
+
+def attach_speed(pid, expected_stamp=None, libraries=None):
+    """Explicit debugger attachment to an owned x86-64 ELF process. No privilege bypass."""
+    pid=int(pid)
+    if pid<=1 or pid==os.getpid():raise ValueError('GE-Memory selbst oder System-PID 1 kann nicht als Speedhack-Ziel verwendet werden.')
+    stamp=identity(pid)
+    if stamp is None or expected_stamp is not None and stamp!=str(expected_stamp):
+        raise ProcessLookupError('Zielprozess beendet, fremder Benutzer oder PID wiederverwendet.')
+    try:
+        return SpeedControl(pid,expected_stamp=stamp)
+    except ValueError:
+        pass
+    debugger=shutil.which('gdb')
+    if not debugger:raise ValueError('Zum Einklinken wird GDB benötigt. Vollständiges GE-Wine-Paket installieren.')
+    with Path(f'/proc/{pid}/exe').open('rb') as executable:header=executable.read(20)
+    if header[:6]!=b'\x7fELF\x02\x01' or header[18:20]!=b'\x3e\x00':
+        raise ValueError('Nachträgliches Einklinken unterstützt derzeit nur Linux-x86-64-Prozesse; 32-Bit-Prozesse benötigen den vorbereiteten Start.')
+    # Enforce the same kernel permission check as a debugger before creating any attachment files.
+    descriptor=os.open(f'/proc/{pid}/mem',os.O_RDWR|os.O_CLOEXEC);os.close(descriptor)
+    source=Path(libraries or os.environ.get('GE_WINE_SPEED_LIBRARY_DIR',Path(__file__).with_name('speed')))/'lib64/libge_speed.so'
+    if not source.is_file():raise ValueError('Speedhack-Bibliothek fehlt. Vollständiges GE-Wine-Paket installieren.')
+    host_directory=Path(tempfile.mkdtemp(prefix='ge-memory-attach-',dir=f'/proc/{pid}/root/tmp'))
+    remote_directory='/tmp/'+host_directory.name
+    library=host_directory/'libge_speed.so'
+    shutil.copyfile(source,library);library.chmod(0o500)
+    script=host_directory/'attach.gdb'
+    commands=['python',
+              f'with open("/proc/{pid}/stat") as stream: ge_stamp=stream.read().rsplit(") ",1)[1].split()[19]',
+              f'if ge_stamp != {stamp!r}: raise gdb.GdbError("Zielprozesskennung geändert")','end',
+              'set pagination off','set confirm off','set auto-load off','set debuginfod enabled off',
+              'set unwindonsignal on',
+              'set $h=((void*(*)(const char*,int))dlopen)("'+remote_directory+'/libge_speed.so",2)',
+              'if $h == 0','detach','quit 1','end',
+              'set $f=((void*(*)(void*,const char*))dlsym)($h,"ge_speed_attach")',
+              'if $f == 0','detach','quit 1','end',
+              'set $hooks=((int(*)(const char*))$f)("'+remote_directory+'")',
+              'printf "GE_SPEED_HOOKS=%d\\n",$hooks','detach']
+    script.write_text('\n'.join(commands)+'\n');script.chmod(0o600)
+    try:
+        if identity(pid)!=stamp:raise ProcessLookupError('Zielprozess wurde beendet.')
+        process=subprocess.Popen([debugger,'-nx','-nh','-q','-batch','-iex','set auto-load off','-iex','set debuginfod enabled off','-p',str(pid),'-x',str(script)],
+                                 stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,errors='replace')
+        try:
+            output=process.communicate(timeout=20)[0]
+        except subprocess.TimeoutExpired:
+            process.send_signal(signal.SIGINT)
+            try:output=process.communicate(timeout=5)[0]
+            except subprocess.TimeoutExpired:
+                process.kill();output=process.communicate()[0]
+            raise ValueError('Einklinken hat das Zeitlimit überschritten. Zielprozess prüfen. '+output[-1500:])
+        match=re.search(r'GE_SPEED_HOOKS=(-?\d+)',output)
+        if process.returncode or match is None or int(match[1])<=0:
+            raise ValueError('Einklinken nicht bestätigt: keine unterstützten Zeitimporte oder Debuggerzugriff verweigert. '+output[-2000:])
+        controller=SpeedControl(pid,directory=host_directory,expected_stamp=stamp)
+        data=dict(pid=pid,start_ticks=stamp,directory=str(host_directory),remote_directory=remote_directory,
+                  hooks=int(match[1]),method='gdb-dlopen-elf-import-rebinding')
+        target=attachment_record(pid,stamp)
+        with tempfile.NamedTemporaryFile(mode='w',dir=target.parent,delete=False) as out:
+            temporary=Path(out.name);json.dump(data,out)
+        os.replace(temporary,target)
+        return controller
+    finally:
+        script.unlink(missing_ok=True)
+        # Never unload a library still referenced by patched imports. Disabling requests factor 1.
+
+
+
 class SpeedControl:
     def __init__(self, pid, directory=None, expected_stamp=None):
         self.pid = int(pid)
@@ -92,9 +182,9 @@ class SpeedControl:
         if directory is None:
             entry = next((item for item in Path(f'/proc/{self.pid}/environ').read_bytes().split(b'\0')
                           if item.startswith(b'GE_WINE_SPEED_DIR=')), None)
-            if entry is None:
-                raise ValueError('Programm neu über GE-Wine mit „Speedhack-Steuerung“ oder --speed-control starten.')
-            directory = os.fsdecode(entry.split(b'=', 1)[1])
+            directory = os.fsdecode(entry.split(b'=', 1)[1]) if entry is not None else attached_directory(self.pid,self.stamp)
+            if directory is None:
+                raise ValueError('Speedhack noch nicht verbunden. In GE-Memory „Speedhack aktiv“ einschalten.')
         self.directory = Path(directory)
         info = self.directory.lstat()
         if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
