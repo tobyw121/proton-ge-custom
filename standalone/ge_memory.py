@@ -6,6 +6,7 @@ import ctypes
 from dataclasses import dataclass
 import os
 import math
+import json
 from pathlib import Path
 import queue
 import struct
@@ -15,6 +16,7 @@ import threading
 import uuid
 
 from ge_wine_sessions import identity
+from ge_speed import SpeedControl, validate_factor
 
 TYPES = {'Int8': '<b', 'UInt8': '<B', 'Int16': '<h', 'UInt16': '<H',
          'Int32': '<i', 'UInt32': '<I', 'Int64': '<q', 'UInt64': '<Q',
@@ -515,6 +517,9 @@ def gui(initial_pid=None):
     aligned = tk.BooleanVar(value=True); shared = tk.BooleanVar(value=False)
     type_filter = tk.StringVar(value='Alle Typen'); page_text = tk.StringVar(); selection_text = tk.StringVar(value='Treffer auswählen, um einen Wert zu bearbeiten.')
     live_enabled = tk.BooleanVar(value=True)
+    speed_target = None; speed_modified = {}
+    speed_factor = tk.StringVar(value='1'); speed_status = tk.StringVar(value='Zuerst einen Prozess auswählen.')
+    speed_title = tk.StringVar(value='Kein Zielprozess')
     body = ttk.Frame(root); body.grid(row=2, column=0, sticky='nsew', padx=20)
     body.columnconfigure(1, weight=1); body.rowconfigure(0, weight=1)
     controls = ttk.Frame(body, style='Card.TFrame', padding=16, width=270)
@@ -578,6 +583,75 @@ def gui(initial_pid=None):
     footer = ttk.Frame(root, padding=(20, 12)); footer.grid(row=3, column=0, sticky='ew'); footer.columnconfigure(0, weight=1)
     progress = ttk.Progressbar(footer, mode='indeterminate', value=0); progress.grid(row=0, column=0, sticky='ew', pady=(0, 8))
     ttk.Label(footer, textvariable=status, style='Subtitle.TLabel', wraplength=1150).grid(row=1, column=0, sticky='w')
+
+    speed_window = tk.Toplevel(root); speed_window.withdraw(); speed_window.title('GE-Memory · Speedhack')
+    speed_window.configure(background=palette['bg']); speed_window.resizable(False, False)
+    speed_window.protocol('WM_DELETE_WINDOW', speed_window.withdraw)
+    speed_panel = ttk.Frame(speed_window, style='Card.TFrame', padding=22); speed_panel.pack(fill='both', expand=True)
+    ttk.Label(speed_panel, text='Speedhack', style='Section.TLabel').grid(row=0, column=0, columnspan=4, sticky='w')
+    ttk.Label(speed_panel, textvariable=speed_title, style='Muted.TLabel').grid(row=1, column=0, columnspan=4, sticky='w', pady=(8, 16))
+    ttk.Label(speed_panel, text='Geschwindigkeit').grid(row=2, column=0, sticky='w', padx=(0, 10))
+    speed_entry = ttk.Entry(speed_panel, textvariable=speed_factor, width=12); speed_entry.grid(row=2, column=1, sticky='ew')
+    ttk.Label(speed_panel, text='×  (0,05 bis 20)').grid(row=2, column=2, columnspan=2, sticky='w', padx=8)
+    ttk.Label(speed_panel, textvariable=speed_status, style='Muted.TLabel', wraplength=490, justify='left').grid(row=5, column=0, columnspan=4, sticky='w', pady=(16, 8))
+    ttk.Label(speed_panel, text='Experimentell: skaliert monotone Zeitabfragen.\nAndere Spieltimer und Serverzeit können unverändert bleiben.\nBeim Schließen von GE-Memory werden geänderte Faktoren auf 1× gesetzt.',
+              style='Muted.TLabel', wraplength=490, justify='left').grid(row=6, column=0, columnspan=4, sticky='w', pady=(8, 0))
+
+    def refresh_speed():
+        nonlocal speed_target
+        if memory is None:
+            speed_target = None; speed_status.set('Zuerst einen Prozess auswählen.'); speed_title.set('Kein Zielprozess')
+        else:
+            speed_title.set(f'Zielprozess: PID {memory.pid}')
+            try:
+                if speed_target is None or speed_target.pid != memory.pid or speed_target.stamp != memory.stamp:
+                    speed_target = SpeedControl(memory.pid)
+                info = speed_target.read()
+                if info['pending']:
+                    speed_status.set(f"{info['requested']:g}× angefordert · wartet auf Zeitabfrage.\nZuletzt bestätigt: {info['applied']:g}× · Zeitabfragen: {info['calls']}")
+                else:
+                    speed_status.set(f"Faktor {info['applied']:g}× von der Zeitbibliothek bestätigt.\nZeitabfragen: {info['calls']} · Wirkung im Spiel bitte prüfen.")
+            except (OSError, ValueError) as error:
+                speed_target = None
+                speed_status.set('Keine erreichbare Zeitbibliothek. Programm neu über GE-Wine mit „Speedhack-Steuerung“ starten.\n' + str(error))
+        for widget in (speed_apply, speed_reset, *speed_presets):
+            widget.configure(state='normal' if speed_target is not None and not busy else 'disabled')
+
+    def set_speed(reset=False):
+        try:
+            if memory is None:
+                raise ValueError('Zuerst einen Prozess auswählen.')
+            controller = SpeedControl(memory.pid)
+            factor = 1 if reset else validate_factor(speed_factor.get())
+            controller.set(factor)
+            speed_modified[(controller.pid, controller.stamp)] = controller
+            speed_factor.set(f'{factor:g}')
+            refresh_speed()
+        except (OSError, ValueError) as error:
+            messagebox.showerror('Speedhack', str(error))
+
+    def show_speed():
+        refresh_speed()
+        if speed_target is not None:
+            try:
+                speed_factor.set(f"{speed_target.read()['requested']:g}")
+            except (OSError, ValueError):
+                refresh_speed()
+        speed_window.deiconify(); speed_window.lift()
+
+    speed_apply = ttk.Button(speed_panel, text='Anwenden', command=set_speed, style='Accent.TButton')
+    speed_apply.grid(row=3, column=0, columnspan=2, sticky='ew', pady=(12, 0), padx=(0, 8))
+    speed_reset = ttk.Button(speed_panel, text='Zurück auf 1×', command=lambda:set_speed(True))
+    speed_reset.grid(row=3, column=2, columnspan=2, sticky='ew', pady=(12, 0))
+    speed_presets = []
+    for index, factor in enumerate((.5, 1, 2)):
+        def preset(value=factor):
+            speed_factor.set(f'{value:g}'); set_speed()
+        button = ttk.Button(speed_panel, text=f'{factor:g}×', command=preset)
+        button.grid(row=4, column=index, sticky='ew', pady=(8, 0), padx=(0, 6))
+        speed_presets.append(button)
+    ttk.Button(speed_panel, text='GE-Wine starten', command=lambda:launch_ge_wine()).grid(row=7, column=0, columnspan=4, sticky='ew', pady=(16, 0))
+    ttk.Button(header, text='Speedhack …', command=show_speed).pack(side='right', padx=(0, 18))
 
     def error_message(error):
         if isinstance(error, PermissionError):
@@ -756,8 +830,8 @@ def gui(initial_pid=None):
 
     def launch_ge_wine():
         try:
-            subprocess.Popen([sys.executable,str(Path(__file__).with_name('ge_wine.py')),'--gui'],start_new_session=True)
-            status.set('GE-Wine geoeffnet. Anwendung dort starten, danach Spiel erkennen.')
+            subprocess.Popen([sys.executable,str(Path(__file__).with_name('ge_wine.py')),'--gui','--speed-control'],start_new_session=True)
+            status.set('GE-Wine mit Speedhack-Steuerung geöffnet. Anwendung starten, danach Spiel erkennen.')
         except OSError as error:
             messagebox.showerror('GE-Wine',str(error))
 
@@ -808,7 +882,9 @@ def gui(initial_pid=None):
     root.memory_widgets = dict(tree=tree, search=search_entry, write=write_entry, first=first_button,
                                refine=refine_button, freeze=freeze_button, release=release_button,
                                filter=filter_box, next=next_button, previous=prev_button, live=live_enabled,
-                               mode=mode_box, upper=upper_entry, tolerance=tolerance_text)
+                               mode=mode_box, upper=upper_entry, tolerance=tolerance_text,
+                               speed_apply=speed_apply, speed_reset=speed_reset, speed_factor=speed_factor,
+                               speed_status=speed_status, speed_window=speed_window)
     process_box.bind('<<ComboboxSelected>>',lambda event:choose_process())
     mode_box.bind('<<ComboboxSelected>>', lambda event:sync_controls())
     filter_box.bind('<<ComboboxSelected>>', lambda event:change_page())
@@ -862,9 +938,15 @@ def gui(initial_pid=None):
                     live[key] = None
                 update_rows(visible_keys)
                 status.set('Speicherzugriff beendet: '+error_message(error))
+        refresh_speed()
         root.after(300,poll)
 
     def close():
+        for controller in speed_modified.values():
+            try:
+                controller.set(1)
+            except (OSError, ValueError):
+                pass
         cancel.set(); frozen.clear()
         if memory:
             memory.close()
@@ -872,6 +954,7 @@ def gui(initial_pid=None):
 
     refresh(auto=initial_pid is None)
     display()
+    refresh_speed()
     root.protocol('WM_DELETE_WINDOW',close)
     root.after(300,poll)
     root.mainloop()
@@ -881,11 +964,20 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description='Nativer Linux-Speicherinspektor fuer GE-Wine und eigene Prozesse.')
     parser.add_argument('--list', action='store_true', help='Eigene Prozesse auflisten')
     parser.add_argument('--pid', type=int, help='Prozess in der GUI vorauswaehlen')
+    parser.add_argument('--speed', help='Speedhack-Faktor für einen mit --speed-control gestarteten --pid-Prozess setzen (0,05–20)')
+    parser.add_argument('--speed-status', action='store_true', help='Bestätigten Speedhack-Zustand für --pid als JSON anzeigen')
     parser.add_argument('--random-name', action='store_true', help='Kosmetischer Zufallsname des Linux-Prozesses; keine Tarnung')
     options = parser.parse_args(argv)
+    if (options.speed is not None or options.speed_status) and options.pid is None:
+        parser.error('--speed und --speed-status benötigen --pid')
     if options.random_name:
         ctypes.CDLL(None).prctl(15, ctypes.c_char_p(uuid.uuid4().hex[:15].encode()), 0, 0, 0)
     try:
+        if options.speed is not None or options.speed_status:
+            controller = SpeedControl(options.pid)
+            info = controller.set(options.speed) if options.speed is not None else controller.read()
+            print(json.dumps(info, ensure_ascii=False))
+            return 0
         if options.list:
             for pid, name, prefix in process_list(False):
                 print(f'{pid}\t{name}\t{prefix}')

@@ -36,8 +36,8 @@ Windows-/GPU-Tests sind darin nicht enthalten.
 ```sh
 bash standalone/build_deb.sh /tmp/ge-wine-dist
 cd /tmp/ge-wine-dist
-sha256sum -c ge-wine_0.10.0_amd64.deb.sha256
-sudo apt install ./ge-wine_0.10.0_amd64.deb
+sha256sum -c ge-wine_0.11.0_amd64.deb.sha256
+sudo apt install ./ge-wine_0.11.0_amd64.deb
 ```
 
 Anschließend im Anwendungsmenü **GE-Wine** öffnen oder:
@@ -528,3 +528,63 @@ auch für Float-Vergleiche und Änderungen. Integer werden weiterhin exakt behan
 Die Vergleiche beziehen sich auf die letzte Suche, nicht auf die laufende Anzeige.
 Dies grenzt numerische Kandidaten ein; daraus lässt sich keine verlässliche Bedeutung
 einer Spielvariable oder ein serverseitiger Wert ableiten.
+
+
+## Speedhack ab 0.11.0 (experimentell)
+
+1. Die Anwendung neu über `ge-wine --speed-control /pfad/Programm.exe` starten.
+   Alternativ in der GE-Wine-GUI „Speedhack-Steuerung für GE-Memory“ aktivieren.
+   Der Button „GE-Wine starten/öffnen“ in GE-Memory aktiviert diese Vorbereitung.
+2. In GE-Memory den tatsächlichen Spielprozess auswählen und oben „Speedhack“ öffnen.
+3. Faktor eingeben und „Anwenden“ wählen. Schnellwahl: 0,5× / 1× / 2×; erlaubt sind
+   0,05× bis 20×. „Zurück auf 1×“ stellt die normale Zeitrate wieder her.
+4. Die Anzeige unterscheidet angeforderte und von der Zeitbibliothek bestätigte
+   Faktoren. Eine Bestätigung bedeutet, dass abgefangene Zeitabfragen skaliert werden;
+   die Wirkung auf das konkrete Spiel muss separat geprüft werden.
+
+Alle vorbereiteten Prozesse starten zunächst bei 1×. Nur die ausgewählte PID wird
+geändert. Beim regulären Schließen von GE-Memory werden die von diesem Fenster
+geänderten Faktoren auf 1× angefordert. Beim Ende des GE-Wine-Starts werden noch
+lebende vorbereitete Prozesse ebenfalls auf 1× zurückgesetzt und die Steuerdateien
+entfernt. Ein harter Abbruch von GE-Memory kann den Faktor bis zum manuellen Reset
+oder dem Ende der GE-Wine-Sitzung aktiv lassen.
+
+CLI-Steuerung (PID ersetzen):
+
+```bash
+ge-memory --pid 12345 --speed 2
+ge-memory --pid 12345 --speed-status
+ge-memory --pid 12345 --speed 1
+```
+
+Die CLI meldet den aktuellen Zustand als JSON; eine noch ausstehende Übernahme
+ist `pending: true`. CLI-Anforderungen bleiben über das Ende des CLI-Befehls hinaus
+aktiv, bis sie zurückgesetzt werden oder der GE-Wine-Start endet.
+
+Technik und Abdeckung: Eine beim Start sichtbare `LD_PRELOAD`-Bibliothek für 64- und
+32-Bit-Linux skaliert `clock_gettime(CLOCK_MONOTONIC/CLOCK_MONOTONIC_RAW)` pro Prozess.
+Sie erhält den akkumulierten virtuellen Zeitwert bei Faktorwechseln, statt die
+Systemlaufzeit mit dem neuen Faktor zu multiplizieren. Systemuhr, Kalenderzeit und
+andere Prozesse bleiben unverändert. Die Steuerdateien sind benutzerprivat und an
+PID plus Linux-Prozessstartkennung gebunden. Es gibt keine nachträgliche Injektion,
+Tarnung oder Änderung von ptrace-/Kernel-Schutzregeln.
+
+Wine kann seine Performance-Counter über diese Uhren abfragen. Direkte CPU-Zähler,
+Wine-GetTickCount aus gemeinsamem Serverspeicher, eigene Engine-Timer, Warteaufrufe
+und serverseitige Spielzeit werden dadurch nicht vollständig skaliert. Gemischte
+Zeitquellen können die Kompatibilität beeinträchtigen. Statische Programme sowie
+Umgebungen, die LD_PRELOAD entfernen (z. B. bestimmte UMU-Gamescope-Sitzungen),
+können nicht vorbereitet sein; GE-Memory zeigt dann die fehlende Bibliothek an.
+Diese Implementierung ist kein garantierter Speedhack für jedes Wine-Spiel.
+Der Icarus-/UMU-Echtbetrieb ist in dieser Cloud-Umgebung nicht getestet.
+
+GE-Wine protokolliert die Vorbereitung in `events.jsonl` und archiviert
+Faktoranforderungen in `speed-commands.jsonl` im datierten Startordner. Während
+des Starts liegen Bibliotheken und Steuerdateien in einem privaten `/tmp`-Ordner,
+der an die Steam-Runtime weitergereicht und bei regulärem Ende entfernt wird.
+
+Für den Quellbau werden zusätzlich `gcc-multilib` und `libc6-dev-i386` benötigt.
+`bash standalone/build_speed.sh /pfad/ausgabe` erzeugt beide Architekturen; der
+Paketbau führt dies automatisch aus. Für Entwicklung ohne installierte Anwendung
+lässt sich `GE_WINE_SPEED_LIBRARY_DIR=/pfad/ausgabe` setzen. Die Bibliotheksquellen
+und das Buildskript liegen auch unter `/usr/share/doc/ge-wine/`.

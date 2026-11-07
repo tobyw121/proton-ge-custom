@@ -19,11 +19,12 @@ from urllib.request import urlopen
 
 from ge_wine_sessions import Session, LaunchCancelled, stop_all
 from ge_wine_logging import RunLog
+from ge_speed import SpeedSession
 from ge_wine_desktop import (windows_links, installer, installed_shortcuts,
                              program_shortcut, write_shortcut)
 
 
-VERSION = "0.10.0"
+VERSION = "0.11.0"
 PINNED_PROTON = "GE-Proton11-11-x86_64"
 PROTON_URL = ("https://github.com/GloriousEggroll/proton-ge-custom/releases/download/"
               "GE-Proton11-11/GE-Proton11-11-x86_64.tar.gz")
@@ -253,7 +254,19 @@ def _application_run(options, command, environment, directory, session, report, 
     if not installer(options.executable) and not any(
             part.casefold() in {"system32", "syswow64"} for part in Path(options.executable).parts):
         report_shortcut(lambda: program_shortcut(options, environment, options.executable, profile, report), report)
-    result = session.run(command, environment, directory, output)
+    if getattr(options, 'speed_control', False):
+        speed_environment = dict(environment)
+        with_speed = SpeedSession(speed_environment)
+        try:
+            report('Speedhack-Steuerung bereit: Zielprozess in GE-Memory wählen; zunächst 1×.\n')
+            if session.log:
+                session.log.event('speed_control_enabled', directory=str(with_speed.path),
+                                  clocks=['CLOCK_MONOTONIC', 'CLOCK_MONOTONIC_RAW'])
+            result = session.run(command, speed_environment, directory, output)
+        finally:
+            with_speed.close(session.log.path if session.log else None)
+    else:
+        result = session.run(command, environment, directory, output)
     if result == 0 and not session.cancelled.is_set():
         report_shortcut(lambda: installed_shortcuts(options, environment, options.executable,
                                                    profile, before, report), report)
@@ -325,6 +338,7 @@ def gui(options):
     profile = tk.StringVar(value=PROFILES[options.profile])
     diagnostics = tk.BooleanVar(value=options.diagnostics)
     full_trace = tk.BooleanVar(value=getattr(options, 'full_trace', False))
+    speed_control = tk.BooleanVar(value=getattr(options, 'speed_control', False))
     nvidia_offload = tk.BooleanVar(value=options.nvidia_offload)
     low_latency = tk.BooleanVar(value=options.low_latency)
     prerequisites = tk.BooleanVar(value=not options.no_prerequisites)
@@ -361,6 +375,7 @@ def gui(options):
         row=5, column=1, columnspan=2, sticky="ew", padx=(0, 12))
     settings = ttk.Frame(root)
     settings.grid(row=6, column=0, columnspan=3, sticky="w", padx=12, pady=8)
+    ttk.Checkbutton(settings, text="Speedhack-Steuerung für GE-Memory (experimentell, Start bei 1×)", variable=speed_control).pack(anchor="w")
     ttk.Checkbutton(settings, text="API-Aufrufe aufzeichnen (sehr langsam / große Logs)", variable=full_trace).pack(anchor="w")
     ttk.Checkbutton(settings, text="Diagnose-HUD: GPU/FPS (Dateilogs immer aktiv)", variable=diagnostics).pack(anchor="w")
     ttk.Checkbutton(settings, text="NVIDIA-GPU erzwingen (Hybrid-Laptop)", variable=nvidia_offload).pack(anchor="w")
@@ -403,7 +418,7 @@ def gui(options):
             prefix=prefix.get(), proton=(None if not options.proton and proton.get() == suggested_proton[0]
                                        else proton.get()), gameid=gameid.get().strip() or "umu-default",
             profile=next(key for key, value in PROFILES.items() if value == profile.get()),
-            diagnostics=diagnostics.get(), full_trace=full_trace.get(), nvidia_offload=nvidia_offload.get(),
+            diagnostics=diagnostics.get(), full_trace=full_trace.get(), speed_control=speed_control.get(), nvidia_offload=nvidia_offload.get(),
             low_latency=low_latency.get(), no_prerequisites=not prerequisites.get())
 
     def worker(command, environment, directory, launch_options):
@@ -512,6 +527,7 @@ def main(argv=None):
     parser.add_argument("--gameid", default=os.environ.get("GAMEID", "umu-default"))
     parser.add_argument("--profile", choices=PROFILES, default="auto")
     parser.add_argument("--no-prerequisites", action="store_true", help="Automatische Icarus-Laufzeit- und Shader-Compiler-Einrichtung überspringen")
+    parser.add_argument("--speed-control", action="store_true", help="Zeitbibliothek für den GE-Memory-Speedhack vorladen (experimentell, Start bei 1x)")
     parser.add_argument("--full-trace", action="store_true", help="Zusätzlich Wine-Relay/Snoop-API-Aufrufe protokollieren (sehr langsam, große Dateien)")
     parser.add_argument("--diagnostics", action="store_true", help="DXVK-HUD aktivieren; Dateilogs werden immer automatisch erstellt")
     parser.add_argument("--nvidia-offload", action="store_true", help="NVIDIA-GPU auf Hybrid-Systemen wählen")
