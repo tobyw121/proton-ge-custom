@@ -74,8 +74,10 @@ jobs:
           probe=Path('dist/smoke.exe').resolve()
           prefix=Path('dist/smoke-prefix').resolve()
           native_wine=Path('dist/native-wine-path.txt').read_text().strip()
+          home=Path('dist/smoke-home').resolve();home.mkdir(exist_ok=True)
+          for name in ('Desktop','Documents','Downloads','tmp'):(home/name).mkdir(exist_ok=True)
           result=subprocess.run([str(executable),'--wine',native_wine,'--no-shortcuts','--prefix',str(prefix),str(probe)],
-                                env=dict(os.environ,WINEDLLOVERRIDES='mscoree,mshtml,winemenubuilder.exe,winemac.drv=d'),timeout=180)
+                                env=dict(os.environ,HOME=str(home),CFFIXED_USER_HOME=str(home),TMPDIR=str(home/'tmp'),WINEDLLOVERRIDES='mscoree,mshtml,winemenubuilder.exe,winemac.drv=d'),timeout=180)
           assert result.returncode==42, f'Windows probe returned {result.returncode}, expected 42'
           assert list((prefix/'logs').glob('*/repetitions.jsonl')), 'Missing per-instance logs'
           PYCODE

@@ -59,7 +59,7 @@ class RunLog:
                                                      'PROTON_LOG', 'PROTON_LOG_DIR', 'DXVK_CONFIG', 'DXVK_HUD',
                                                      'DXVK_LOG_PATH', 'DXVK_LOG_LEVEL', 'UMU_LOG'}},
                              backend_log_layout='calls/NNNN/',
-                             coverage='stdout/stderr, direct launches, Wine debug channels; Linux process sampling every 250 ms; no kernel syscall trace')
+                             coverage='stdout/stderr, direct launches, Wine debug channels; ' + ('macOS' if sys.platform=='darwin' else 'Linux') + ' process sampling every 250 ms; no kernel syscall trace')
         self._metadata()
         self.event('recording_start', profile=profile)
         self.publish_repetitions(scan_native=False)
