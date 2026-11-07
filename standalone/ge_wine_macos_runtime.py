@@ -181,7 +181,7 @@ def ensure_wine(report,cancelled=None,explicit=None,root=None):
     if explicit:
         return wine_binary(explicit)
     spec = manifest()['wine']
-    root = Path(root or support_directory()/'runtimes')
+    root = Path(root or support_directory()/'runtimes').expanduser().resolve()
     destination = root/('wine-'+spec['version'])
     binary = destination/'Wine Stable.app/Contents/Resources/wine/bin/wine'
     if binary.is_file():
@@ -209,7 +209,7 @@ def ensure_wine(report,cancelled=None,explicit=None,root=None):
             if destination.exists():
                 raise ValueError(f'Unvollständige vorhandene Mac-Laufzeit: {destination}')
             extracted.rename(destination)
-    return binary
+    return wine_binary(binary)
 
 
 def require_dependencies(report,cancelled=None,interactive=False):

@@ -21,7 +21,7 @@ import ge_wine_macos_runtime as runtime
 class MacTests(unittest.TestCase):
     def setUp(self):
         self.temporary=tempfile.TemporaryDirectory();self.addCleanup(self.temporary.cleanup)
-        self.root=Path(self.temporary.name)
+        self.root=Path(self.temporary.name).resolve()
         self.home=self.root/'home';self.home.mkdir()
         self.exe=self.root/'Windows Game $(touch nope).exe';self.exe.touch()
         self.wine=self.root/'fake wine'
