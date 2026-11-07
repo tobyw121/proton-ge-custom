@@ -62,11 +62,14 @@ class SpeedSession:
         if not self.path.exists():
             return
         # Closing the launch restores normal speed, even for a surviving background process.
-        for file in self.path.glob('*.control'):
+        for process in Path('/proc').iterdir():
+            if not process.name.isdigit() or identity(int(process.name)) is None:
+                continue
             try:
-                pid, stamp = file.stem.split('-', 1)
-                control = SpeedControl(int(pid), directory=self.path, expected_stamp=stamp)
-                control.set(1)
+                marker = ('GE_WINE_SPEED_DIR=' + str(self.path)).encode()
+                if marker not in (process / 'environ').read_bytes().split(b'\0'):
+                    continue
+                SpeedControl(int(process.name), directory=self.path).set(1)
             except (OSError, ValueError):
                 continue
         commands = self.path / 'commands.jsonl'
@@ -96,7 +99,22 @@ class SpeedControl:
         info = self.directory.lstat()
         if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
             raise ValueError('Ungültiger Speedhack-Steuerordner.')
-        self.path = self.directory / f'{self.pid}-{self.stamp}.control'
+        # Pressure-vessel may expose a different PID inside its PID namespace.
+        namespace_pids = [self.pid]
+        try:
+            for line in Path(f'/proc/{self.pid}/status').read_text().splitlines():
+                if line.startswith('NSpid:'):
+                    namespace_pids = [int(value) for value in line.split()[1:]] or namespace_pids
+                    break
+        except (OSError, ValueError):
+            pass
+        self.namespace_pid = self.pid
+        for candidate in reversed(namespace_pids):
+            candidate_path = self.directory / f'{candidate}-{self.stamp}.control'
+            if candidate_path.exists():
+                self.namespace_pid = candidate
+                break
+        self.path = self.directory / f'{self.namespace_pid}-{self.stamp}.control'
         self.read()
 
     def _open(self):
@@ -118,9 +136,9 @@ class SpeedControl:
         if len(data) != SIZE or data[:8] != MAGIC:
             raise ValueError('Speedhack-Bibliothek noch nicht bereit.')
         pid, stamp, request, requested, applied, actual, calls = struct.unpack_from('<QQQdQdQ', data, 8)
-        if pid != self.pid or str(stamp) != self.stamp:
+        if pid != self.namespace_pid or str(stamp) != self.stamp:
             raise ValueError('Speedhack-Prozesskennung stimmt nicht überein.')
-        return dict(pid=pid, requested=requested, applied=actual, pending=bool(request & 1 or request != applied), calls=calls)
+        return dict(pid=self.pid, namespace_pid=pid, requested=requested, applied=actual, pending=bool(request & 1 or request != applied), calls=calls)
 
     def set(self, value):
         factor = validate_factor(value)
@@ -134,7 +152,7 @@ class SpeedControl:
                                 (24, struct.pack('<Q', sequence+1))):
                 if os.pwrite(descriptor, raw, offset) != 8:
                     raise OSError('Geschwindigkeitsanforderung unvollständig geschrieben.')
-            event = dict(time=datetime.now().astimezone().isoformat(), pid=self.pid,
+            event = dict(time=datetime.now().astimezone().isoformat(), pid=self.pid, namespace_pid=self.namespace_pid,
                          start_ticks=self.stamp, factor=factor, request=sequence+1)
             fd = os.open(self.directory / 'commands.jsonl', os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
             with os.fdopen(fd, 'w') as output:

@@ -566,7 +566,9 @@ Technik und Abdeckung: Eine beim Start sichtbare `LD_PRELOAD`-Bibliothek für 64
 Sie erhält den akkumulierten virtuellen Zeitwert bei Faktorwechseln, statt die
 Systemlaufzeit mit dem neuen Faktor zu multiplizieren. Systemuhr, Kalenderzeit und
 andere Prozesse bleiben unverändert. Die Steuerdateien sind benutzerprivat und an
-PID plus Linux-Prozessstartkennung gebunden. Es gibt keine nachträgliche Injektion,
+PID plus Linux-Prozessstartkennung gebunden. Host- und Runtime-PIDs werden über
+`NSpid` zugeordnet, falls die Runtime einen eigenen PID-Namensraum verwendet.
+Es gibt keine nachträgliche Injektion,
 Tarnung oder Änderung von ptrace-/Kernel-Schutzregeln.
 
 Wine kann seine Performance-Counter über diese Uhren abfragen. Direkte CPU-Zähler,

@@ -210,6 +210,29 @@ class SpeedTests(unittest.TestCase):
         self.measure(process,1)
         self.assertEqual(control.read()['applied'],1)
 
+    def test_pid_namespace_mapping_and_session_reset(self):
+        process, original, session = self.spawn('64')
+        namespace_pid = process.pid + 1000000
+        namespace_path = session.path/f'{namespace_pid}-{original.stamp}.control'
+        with original.path.open('r+b') as output:
+            output.seek(8); output.write(struct.pack('<Q',namespace_pid))
+        original.path.rename(namespace_path)
+        read_text = Path.read_text
+        def read_status(path,*args,**kwargs):
+            text = read_text(path,*args,**kwargs)
+            if str(path) == f'/proc/{process.pid}/status':
+                text = '\n'.join(line for line in text.splitlines() if not line.startswith('NSpid:'))
+                text += f'\nNSpid:\t{process.pid}\t{namespace_pid}\n'
+            return text
+        with patch.object(Path,'read_text',read_status):
+            control = SpeedControl(process.pid)
+            self.assertEqual(control.namespace_pid,namespace_pid)
+            control.set(2)
+            self.measure(process,2)
+            self.assertEqual(control.read()['pid'],process.pid)
+            session.close()
+            self.measure(process,1)
+
     def test_factor_validation_and_pid_identity(self):
         for value in ('nan','inf','0','-1','21','not-a-number'):
             with self.assertRaises(ValueError): validate_factor(value)
