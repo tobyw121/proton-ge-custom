@@ -39,31 +39,6 @@ jobs:
         run: python3 -m unittest discover -s standalone/tests -p test_macos.py -v
       - name: Build app, DMG and ZIP
         run: bash standalone/build_macos.sh "$GITHUB_WORKSPACE/dist/macos"
-      - name: Native Wine smoke test (Intel)
-        if: matrix.arch == 'x86_64'
-        run: |
-          python3 - <<'PY'
-          import sys
-          sys.path.insert(0,'standalone')
-          from ge_wine_macos_runtime import download, manifest
-          from pathlib import Path
-          spec=manifest()['gstreamer']
-          download(spec,Path('dist/gstreamer.pkg'),print)
-          PY
-          sudo installer -pkg dist/gstreamer.pkg -target /
-          ditto -x -k dist/macos/ge-wine_0.13.0_macos_x86_64.zip dist/smoke
-          python3 standalone/tests/macos_smoke.py dist/smoke.exe
-          python3 - <<'PY'
-          import os, subprocess
-          from pathlib import Path
-          executable=Path('dist/smoke/GE-Wine.app/Contents/MacOS/GE-Wine').resolve()
-          probe=Path('dist/smoke.exe').resolve()
-          prefix=Path('dist/smoke-prefix').resolve()
-          result=subprocess.run([str(executable),'--no-shortcuts','--prefix',str(prefix),str(probe)],
-                                env=dict(os.environ,WINEDLLOVERRIDES='mscoree,mshtml,winemenubuilder.exe=d'),timeout=180)
-          assert result.returncode==42, f'Windows probe returned {result.returncode}, expected 42'
-          assert list((prefix/'logs').glob('*/repetitions.jsonl')), 'Missing per-instance logs'
-          PY
       - name: Upload macOS package
         uses: actions/upload-artifact@v5
         with:
@@ -74,6 +49,62 @@ jobs:
             dist/macos/*.sha256
           if-no-files-found: error
           retention-days: 14
+      - name: Cache native Wine setup archives (Intel)
+        if: matrix.arch == 'x86_64'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/Library/Application Support/GE-Wine/runtimes
+            dist/gstreamer.pkg
+          key: macos-wine-${{ matrix.arch }}-${{ hashFiles('standalone/macos_runtime.json') }}
+      - name: Download verified GStreamer installer (Intel)
+        if: matrix.arch == 'x86_64'
+        timeout-minutes: 5
+        env:
+          PYTHONUNBUFFERED: '1'
+        run: |
+          python3 - <<'PYCODE'
+          import sys
+          sys.path.insert(0,'standalone')
+          from ge_wine_macos_runtime import download, manifest
+          from pathlib import Path
+          spec=manifest()['gstreamer']
+          download(spec,Path('dist/gstreamer.pkg'),lambda text: print(text,flush=True))
+          PYCODE
+      - name: Install GStreamer dependency (Intel)
+        if: matrix.arch == 'x86_64'
+        timeout-minutes: 5
+        run: sudo installer -pkg dist/gstreamer.pkg -target /
+      - name: Set up native Wine from packaged application (Intel)
+        if: matrix.arch == 'x86_64'
+        timeout-minutes: 5
+        run: |
+          ditto -x -k dist/macos/ge-wine_0.13.0_macos_x86_64.zip dist/smoke
+          'dist/smoke/GE-Wine.app/Contents/MacOS/GE-Wine' --setup-runtime
+      - name: Native Windows executable smoke test (Intel)
+        if: matrix.arch == 'x86_64'
+        timeout-minutes: 5
+        run: |
+          python3 standalone/tests/macos_smoke.py dist/smoke.exe
+          python3 - <<'PYCODE'
+          import os, subprocess
+          from pathlib import Path
+          executable=Path('dist/smoke/GE-Wine.app/Contents/MacOS/GE-Wine').resolve()
+          probe=Path('dist/smoke.exe').resolve()
+          prefix=Path('dist/smoke-prefix').resolve()
+          result=subprocess.run([str(executable),'--no-shortcuts','--prefix',str(prefix),str(probe)],
+                                env=dict(os.environ,WINEDLLOVERRIDES='mscoree,mshtml,winemenubuilder.exe=d'),timeout=180)
+          assert result.returncode==42, f'Windows probe returned {result.returncode}, expected 42'
+          assert list((prefix/'logs').glob('*/repetitions.jsonl')), 'Missing per-instance logs'
+          PYCODE
+      - name: Upload native Wine diagnostics on failure
+        if: failure() && matrix.arch == 'x86_64'
+        uses: actions/upload-artifact@v5
+        with:
+          name: ge-wine-macos-smoke-diagnostics
+          path: dist/smoke-prefix/logs
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Build summary
         run: |
           cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
