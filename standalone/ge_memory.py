@@ -414,40 +414,111 @@ def gui(initial_pid=None):
         root = tk.Tk()
     except tk.TclError as error:
         raise ValueError('Keine grafische Sitzung. Fuer die Prozessliste --list verwenden.') from error
-    root.title('GE-Memory - Live-Speicherinspektor')
-    root.geometry('1150x740')
-    root.columnconfigure(1, weight=1); root.rowconfigure(5, weight=1)
+    root.title('GE-Memory · Speicherinspektor')
+    root.geometry('1280x780'); root.minsize(1120, 700)
+    style = ttk.Style(root); style.theme_use('clam')
+    palette = dict(bg='#111827', panel='#1f2937', field='#111827', text='#e5e7eb', muted='#9ca3af', accent='#60a5fa')
+    root.configure(background=palette['bg'])
+    style.configure('.', background=palette['panel'], foreground=palette['text'], font=('DejaVu Sans', 10))
+    style.configure('TFrame', background=palette['bg'])
+    style.configure('Card.TFrame', background=palette['panel'])
+    style.configure('TLabel', background=palette['panel'])
+    style.configure('Title.TLabel', background=palette['bg'], font=('DejaVu Sans', 22, 'bold'))
+    style.configure('Subtitle.TLabel', background=palette['bg'], foreground=palette['muted'])
+    style.configure('Section.TLabel', font=('DejaVu Sans', 11, 'bold'))
+    style.configure('Muted.TLabel', foreground=palette['muted'])
+    style.configure('TButton', padding=(12, 8), borderwidth=0)
+    style.map('TButton', background=[('active', '#374151')], foreground=[('disabled', '#6b7280')])
+    style.configure('Accent.TButton', background='#2563eb', foreground='white')
+    style.map('Accent.TButton', background=[('disabled', '#374151'), ('active', '#1d4ed8')])
+    style.configure('Horizontal.TProgressbar', background='#3b82f6', troughcolor=palette['panel'], borderwidth=0)
+    style.configure('TEntry', fieldbackground=palette['field'], insertcolor=palette['text'], padding=7)
+    style.configure('TCombobox', fieldbackground=palette['field'], padding=6, arrowsize=14)
+    style.map('TCombobox', fieldbackground=[('readonly', palette['field'])], selectbackground=[('readonly', palette['field'])], selectforeground=[('readonly', palette['text'])])
+    style.configure('TCheckbutton', background=palette['panel'], padding=4)
+    style.map('TCheckbutton', background=[('active', palette['panel'])])
+    style.configure('Treeview', background=palette['field'], fieldbackground=palette['field'], foreground=palette['text'], rowheight=30, borderwidth=0)
+    style.configure('Treeview.Heading', background=palette['panel'], foreground=palette['muted'], padding=9, font=('DejaVu Sans', 9, 'bold'))
+    style.map('Treeview', background=[('selected', '#1e40af')], foreground=[('selected', 'white')])
+    root.option_add('*TCombobox*Listbox.background', palette['field'])
+    root.option_add('*TCombobox*Listbox.foreground', palette['text'])
+    root.columnconfigure(0, weight=1); root.rowconfigure(2, weight=1)
+    header = ttk.Frame(root, padding=(22, 16)); header.grid(row=0, column=0, sticky='ew')
+    ttk.Label(header, text='GE-Memory', style='Title.TLabel').pack(side='left')
+    ttk.Label(header, text='Prozess wählen  →  Suchen  →  Werte bearbeiten', style='Subtitle.TLabel').pack(side='right')
+    connection = ttk.Frame(root, style='Card.TFrame', padding=14)
+    connection.grid(row=1, column=0, sticky='ew', padx=20, pady=(0, 14)); connection.columnconfigure(1, weight=1)
+    ttk.Label(connection, text='01  Prozess', style='Section.TLabel').grid(row=0, column=0, sticky='w', padx=(0, 14))
     wine_only = tk.BooleanVar(value=initial_pid is None)
     pid_value = tk.StringVar()
-    process_box = ttk.Combobox(root, textvariable=pid_value, state='readonly', width=80)
-    ttk.Label(root, text='Hauptprozess').grid(row=0, column=0, padx=10, pady=8)
-    process_box.grid(row=0, column=1, sticky='ew')
+    process_box = ttk.Combobox(connection, textvariable=pid_value, state='readonly', width=60)
+    process_box.grid(row=0, column=1, sticky='ew', padx=(0, 8))
     process_ids = {}; memory = None; results = {}; frozen = {}; live = {}; changed_at = {}
     visible_keys = []; row_keys = {}; events = queue.Queue(); cancel = threading.Event(); busy = False; watching = True
+    page = 0; page_size = 500
     status = tk.StringVar(value='Spielerkennung bevorzugt GE-Wine-Hauptprozesse mit mehr als 1 GiB RSS.')
     kind = tk.StringVar(value=AUTO); mode = tk.StringVar(value='Gleich')
     value = tk.StringVar(value='100'); limit = tk.StringVar(value='0'); new_value = tk.StringVar(value='100')
     per_type_limit = tk.StringVar(value='100000')
     aligned = tk.BooleanVar(value=True); shared = tk.BooleanVar(value=False)
-    controls = ttk.Frame(root); controls.grid(row=3, column=0, columnspan=3, sticky='ew', padx=10, pady=8)
-    ttk.Label(controls, text='Suchtyp').pack(side='left')
-    ttk.Combobox(controls, textvariable=kind, values=[AUTO, *TYPES], state='readonly', width=14).pack(side='left', padx=6)
-    ttk.Label(controls, text='Suchwert').pack(side='left')
-    ttk.Entry(controls, textvariable=value, width=16).pack(side='left', padx=6)
-    ttk.Combobox(controls, textvariable=mode, values=MODES, state='readonly', width=14).pack(side='left')
-    ttk.Label(controls, text='Limit MiB (0=gesamt)').pack(side='left', padx=6)
-    ttk.Entry(controls, textvariable=limit, width=7).pack(side='left')
-    ttk.Label(controls,text='Treffer/Typ').pack(side='left',padx=6)
-    ttk.Entry(controls,textvariable=per_type_limit,width=9).pack(side='left')
-    tree = ttk.Treeview(root, columns=('address','type','value','baseline','initial','freeze'), show='headings', selectmode='extended')
-    for column, label, width in [('address','Adresse (hex)',155),('type','Typ',90),('value','Aktueller Wert',190),
-                                 ('baseline','Letzte Suche',180),('initial','Erstwert',180),('freeze','Eingefroren',90)]:
-        tree.heading(column, text=label); tree.column(column, width=width)
-    tree.tag_configure('changed', foreground='#b05a00')
-    tree.tag_configure('unreadable', foreground='#a02020')
-    tree.grid(row=5, column=0, columnspan=2, sticky='nsew', padx=(10,0))
-    scroll = ttk.Scrollbar(root, orient='vertical', command=tree.yview)
-    scroll.grid(row=5,column=2,sticky='ns',padx=(0,10)); tree.configure(yscrollcommand=scroll.set)
+    type_filter = tk.StringVar(value='Alle Typen'); page_text = tk.StringVar(); selection_text = tk.StringVar(value='Treffer auswählen, um einen Wert zu bearbeiten.')
+    live_enabled = tk.BooleanVar(value=True)
+    body = ttk.Frame(root); body.grid(row=2, column=0, sticky='nsew', padx=20)
+    body.columnconfigure(1, weight=1); body.rowconfigure(0, weight=1)
+    controls = ttk.Frame(body, style='Card.TFrame', padding=16, width=270)
+    controls.grid(row=0, column=0, sticky='ns', padx=(0, 14)); controls.columnconfigure(0, weight=1)
+    ttk.Label(controls, text='02  Suche', style='Section.TLabel').grid(row=0, column=0, sticky='w', pady=(0, 16))
+    ttk.Label(controls, text='Suchwert').grid(row=1, column=0, sticky='w')
+    search_entry = ttk.Entry(controls, textvariable=value, width=24, name='search_value'); search_entry.grid(row=2, column=0, sticky='ew', pady=(5, 12))
+    ttk.Label(controls, text='Datentyp · nur für die Erstsuche').grid(row=3, column=0, sticky='w')
+    kind_box = ttk.Combobox(controls, textvariable=kind, values=[AUTO, *TYPES], state='readonly', width=22)
+    kind_box.grid(row=4, column=0, sticky='ew', pady=(5, 12))
+    ttk.Label(controls, text='Vergleich · nur für die Folgesuche').grid(row=5, column=0, sticky='w')
+    mode_box = ttk.Combobox(controls, textvariable=mode, values=MODES, state='readonly', width=22)
+    mode_box.grid(row=6, column=0, sticky='ew', pady=(5, 14))
+    buttons = ttk.Frame(controls, style='Card.TFrame'); buttons.grid(row=7, column=0, sticky='ew'); buttons.columnconfigure(0, weight=1)
+    options = tk.Toplevel(root); options.title('GE-Memory · Suchoptionen'); options.withdraw()
+    options.configure(background=palette['panel']); options.resizable(False, False)
+    options.protocol('WM_DELETE_WINDOW', options.withdraw)
+    def show_options():
+        options.deiconify(); options.lift()
+    ttk.Button(controls, text='Suchoptionen …', command=show_options).grid(row=9, column=0, sticky='ew', pady=(16, 0))
+    ttk.Label(controls, text='Live zeigt den aktuellen Wert.\nLetzte Suche bleibt der Vergleich\nfür die nächste Folgesuche.', style='Muted.TLabel', justify='left').grid(row=10, column=0, sticky='w', pady=(18, 0))
+    advanced = ttk.Frame(options, style='Card.TFrame', padding=20); advanced.pack(fill='both', expand=True); advanced.columnconfigure(0, weight=1)
+    ttk.Label(advanced, text='Suchbereich', style='Section.TLabel').grid(row=0, column=0, sticky='w', pady=(0, 8))
+    ttk.Label(advanced, text='Limit in MiB · 0 = gesamter Bereich', style='Muted.TLabel').grid(row=1, column=0, sticky='w')
+    ttk.Entry(advanced, textvariable=limit, width=12).grid(row=2, column=0, sticky='ew', pady=(5, 10))
+    ttk.Label(advanced, text='Maximale Treffer pro Datentyp', style='Muted.TLabel').grid(row=3, column=0, sticky='w')
+    ttk.Entry(advanced, textvariable=per_type_limit, width=12).grid(row=4, column=0, sticky='ew', pady=(5, 8))
+    ttk.Checkbutton(advanced, text='Ausgerichtete Adressen', variable=aligned).grid(row=5, column=0, sticky='w')
+    ttk.Checkbutton(advanced, text='Gemeinsamen RAM einschließen', variable=shared).grid(row=6, column=0, sticky='w')
+    ttk.Label(advanced, text='Automatisch prüft alle 11 Typen.\nGleiche Bytes können mehrere\nInterpretationen ergeben.', style='Muted.TLabel', justify='left').grid(row=7, column=0, sticky='w', pady=(12, 0))
+    content = ttk.Frame(body, style='Card.TFrame', padding=14); content.grid(row=0, column=1, sticky='nsew')
+    content.columnconfigure(0, weight=1); content.rowconfigure(1, weight=1)
+    toolbar = ttk.Frame(content, style='Card.TFrame'); toolbar.grid(row=0, column=0, columnspan=2, sticky='ew', pady=(0, 12))
+    ttk.Label(toolbar, text='03  Treffer', style='Section.TLabel').pack(side='left', padx=(0, 12))
+    filter_box = ttk.Combobox(toolbar, textvariable=type_filter, values=['Alle Typen', *TYPES], width=14, state='readonly'); filter_box.pack(side='left')
+    ttk.Checkbutton(toolbar, text='Live-Werte (300 ms)', variable=live_enabled).pack(side='right')
+    tree = ttk.Treeview(content, columns=('address','type','value','baseline','initial','freeze'), show='headings', selectmode='extended', name='results')
+    for column, label, width in [('address','Adresse',145),('type','Typ',80),('value','Aktuell',135),('baseline','Letzte Suche',135),('initial','Erstwert',135),('freeze','Fixiert',65)]:
+        tree.heading(column, text=label); tree.column(column, width=width, minwidth=60, stretch=True)
+    tree.tag_configure('changed', foreground='#fbbf24'); tree.tag_configure('unreadable', foreground='#f87171')
+    tree.grid(row=1, column=0, sticky='nsew')
+    scroll = ttk.Scrollbar(content, orient='vertical', command=tree.yview)
+    scroll.grid(row=1,column=1,sticky='ns'); tree.configure(yscrollcommand=scroll.set)
+    pagination = ttk.Frame(content, style='Card.TFrame'); pagination.grid(row=2, column=0, columnspan=2, sticky='ew', pady=(10, 0))
+    ttk.Label(pagination, textvariable=page_text, style='Muted.TLabel').pack(side='left')
+    edit = ttk.Frame(content, style='Card.TFrame'); edit.grid(row=3, column=0, columnspan=2, sticky='ew', pady=(16, 0))
+    ttk.Separator(edit).grid(row=0, column=0, columnspan=5, sticky='ew', pady=(0, 12))
+    ttk.Label(edit, textvariable=selection_text, style='Muted.TLabel').grid(row=1, column=0, columnspan=5, sticky='w', pady=(0, 8))
+    ttk.Label(edit, text='Neuer Wert').grid(row=2, column=0, sticky='w', padx=(0, 8))
+    write_entry = ttk.Entry(edit, textvariable=new_value, width=17, name='write_value'); write_entry.grid(row=2, column=1, sticky='ew', padx=(0, 8))
+    edit.columnconfigure(1, weight=1)
+    write_type = tk.StringVar(value='Der Datentyp des Treffers bleibt beim Schreiben erhalten.')
+    ttk.Label(edit, textvariable=write_type, style='Muted.TLabel').grid(row=3, column=0, columnspan=5, sticky='w', pady=(8, 0))
+    footer = ttk.Frame(root, padding=(20, 12)); footer.grid(row=3, column=0, sticky='ew'); footer.columnconfigure(0, weight=1)
+    progress = ttk.Progressbar(footer, mode='indeterminate', value=0); progress.grid(row=0, column=0, sticky='ew', pady=(0, 8))
+    ttk.Label(footer, textvariable=status, style='Subtitle.TLabel', wraplength=1150).grid(row=1, column=0, sticky='w')
 
     def error_message(error):
         if isinstance(error, PermissionError):
@@ -458,26 +529,24 @@ def gui(initial_pid=None):
     def display():
         nonlocal visible_keys, row_keys
         selected = tree.selection(); tree.delete(*tree.get_children())
-        groups = {name:[] for name in TYPES}
-        for key in results:
-            if len(groups[key[1]])<2000:
-                groups[key[1]].append(key)
-        grouped = list(groups.values())
-        visible_keys = []
-        for group in itertools.zip_longest(*grouped):
-            for key in group:
-                if key is not None:
-                    visible_keys.append(key)
-                    if len(visible_keys) == 2000:
-                        break
-            if len(visible_keys) == 2000:
-                break
+        filtered = [key for key in results if type_filter.get() == 'Alle Typen' or key[1] == type_filter.get()]
+        # Interleave types so automatic searches remain useful on the first page.
+        groups = [[key for key in filtered if key[1] == name] for name in TYPES]
+        ordered = [key for group in itertools.zip_longest(*groups) for key in group if key is not None]
+        nonlocal page
+        pages = max(1, (len(ordered)+page_size-1)//page_size)
+        page = min(page, pages-1)
+        visible_keys = ordered[page*page_size:(page+1)*page_size]
+        page_text.set(f'{len(filtered):,} von {len(results):,} Treffern · Seite {page+1}/{pages}')
+        prev_button.configure(state='normal' if page > 0 else 'disabled')
+        next_button.configure(state='normal' if page+1 < pages else 'disabled')
         row_keys = {}
         for key in visible_keys:
             hit = results[key]; iid = f'{hit.address}:{hit.kind}'; row_keys[iid] = key
             tree.insert('','end',iid=iid,values=(hex(hit.address),hit.kind,show_value(live.get(key,hit.baseline),hit.kind),
                         show_value(hit.baseline,hit.kind),show_value(hit.initial,hit.kind),'Ja' if key in frozen else ''))
         tree.selection_set([item for item in selected if tree.exists(item)])
+        selection_changed(); sync_controls()
 
     def choose_process():
         nonlocal memory, results, live, watching
@@ -503,12 +572,13 @@ def gui(initial_pid=None):
         process_ids = {f'{p.pid}  {p.name}  {p.rss/1024**3:.2f} GiB' +
                        ('  [Spiel-Kandidat]' if p.candidate else '') + f'  {p.prefix}':p.pid for p in rows}
         process_box['values'] = list(process_ids)
-        target = current if current else preferred_game(rows) if auto else None
+        detected = preferred_game(rows) if auto else None
+        target = detected if detected is not None else current
         label = next((label for label,pid in process_ids.items() if pid == target),'')
         pid_value.set(label)
-        if label and memory is None:
+        if label and (memory is None or memory.pid != target):
             choose_process()
-        elif auto and not label:
+        if auto and detected is None:
             status.set('Kein eindeutiger Spielprozess >1 GiB erkannt. Hauptprozess bitte selbst auswaehlen.')
 
     def start_scan(first):
@@ -532,7 +602,7 @@ def gui(initial_pid=None):
             messagebox.showerror('Suche',str(error)); return
         if first:
             frozen.clear(); results = {}; live = {}; changed_at.clear(); display()
-        cancel.clear(); busy = True; process_box.configure(state='disabled')
+        cancel.clear(); busy = True; sync_controls(); progress.start(12)
         previous = dict(results); target = memory; chosen_mode = mode.get()
         use_alignment = aligned.get(); use_shared = shared.get()
         status.set('Suche laeuft ...')
@@ -560,8 +630,6 @@ def gui(initial_pid=None):
                     note = f'{len(matches)} Treffer nach Folgesuche.'
                 if cancel.is_set():
                     note += ' Abgebrochen; Teilergebnisse.'
-                if len(matches)>2000:
-                    note += ' 2000 Treffer nach Typen verteilt sichtbar.'
                 events.put(('result',(matches,note)))
             except (OSError,ValueError) as error:
                 events.put(('error',error))
@@ -588,7 +656,7 @@ def gui(initial_pid=None):
             status.set(f'{len(encoded)} typgerecht geschrieben und zurueckgelesen.' +
                        (f' {mismatch} Werte bereits abweichend/nicht lesbar.' if mismatch else ' Ruecklesen stimmt ueberein.') +
                        (' Einfrieren aktiv.' if freeze else ''))
-            update_rows(keys)
+            update_rows(keys); sync_controls()
         except (OSError,ValueError) as error:
             messagebox.showerror('Speicherzugriff',error_message(error))
 
@@ -606,11 +674,14 @@ def gui(initial_pid=None):
         keys = selected_keys()
         for key in keys:
             frozen.pop(key,None)
-        update_rows(keys)
+        update_rows(keys); sync_controls()
+        status.set(f'{len(keys)} ausgewählte Treffer freigegeben.')
 
     def selection_changed(event=None):
         keys = selected_keys()
         types = sorted({key[1] for key in keys})
+        selection_text.set(f'{len(keys)} ausgewählt · {len(frozen)} fixiert' if keys else 'Treffer auswählen, um einen Wert zu bearbeiten.')
+        sync_controls()
         write_type.set('Schreibtyp: ' + ', '.join(types) if types else 'Schreibtyp: jeweiliger Treffer')
         if len(keys)==1:
             key = keys[0]; data = live.get(key,results[key].baseline)
@@ -625,29 +696,56 @@ def gui(initial_pid=None):
         except OSError as error:
             messagebox.showerror('GE-Wine',str(error))
 
-    ttk.Button(root,text='Aktualisieren',command=refresh).grid(row=0,column=2,padx=10)
-    filters = ttk.Frame(root); filters.grid(row=1,column=1,sticky='w')
-    ttk.Checkbutton(filters,text='Nur GE-Wine/Wine',variable=wine_only,command=refresh).pack(side='left')
-    ttk.Button(filters,text='Spiel erkennen (>1 GiB)',command=lambda:refresh(True)).pack(side='left',padx=8)
-    ttk.Checkbutton(filters,text='Ausgerichtete Suche',variable=aligned).pack(side='left')
-    ttk.Checkbutton(filters,text='Gemeinsamen RAM einschliessen',variable=shared).pack(side='left',padx=6)
-    ttk.Button(root,text='GE-Wine starten',command=launch_ge_wine).grid(row=1,column=2,padx=10)
-    ttk.Label(root,text='Mehrere Typen koennen dieselben Bytes passend interpretieren. Fuer Schreiben den passenden Treffer waehlen.',
-              wraplength=1100).grid(row=2,column=0,columnspan=3,padx=10,sticky='w')
-    buttons = ttk.Frame(root); buttons.grid(row=4,column=0,columnspan=3,sticky='w',padx=10,pady=8)
-    ttk.Button(buttons,text='Erstsuche',command=lambda:start_scan(True)).pack(side='left',padx=4)
-    ttk.Button(buttons,text='Folgesuche',command=lambda:start_scan(False)).pack(side='left',padx=4)
-    ttk.Button(buttons,text='Suche abbrechen',command=cancel.set).pack(side='left',padx=4)
-    edit = ttk.Frame(root); edit.grid(row=6,column=0,columnspan=3,sticky='w',padx=10,pady=8)
-    ttk.Label(edit,text='Neuer Wert').pack(side='left'); ttk.Entry(edit,textvariable=new_value,width=18).pack(side='left',padx=5)
-    ttk.Button(edit,text='Schreiben',command=write_values).pack(side='left',padx=4)
-    ttk.Button(edit,text='Einfrieren',command=lambda:write_values(True)).pack(side='left',padx=4)
-    ttk.Button(edit,text='Freigeben',command=unfreeze).pack(side='left',padx=4)
-    write_type = tk.StringVar(value='Schreibtyp: jeweiliger Treffer')
-    ttk.Label(edit,textvariable=write_type).pack(side='left',padx=10)
-    ttk.Label(root,textvariable=status,wraplength=1100).grid(row=7,column=0,columnspan=3,sticky='w',padx=10,pady=8)
+    def sync_controls():
+        process_box.configure(state='disabled' if busy else 'readonly')
+        for button in (refresh_button, detect_button):
+            button.configure(state='disabled' if busy else 'normal')
+        first_button.configure(state='normal' if memory is not None and not busy else 'disabled')
+        refine_button.configure(state='normal' if results and not busy else 'disabled')
+        stop_button.configure(state='normal' if busy else 'disabled')
+        mode_box.configure(state='readonly' if results and not busy else 'disabled')
+        kind_box.configure(state='disabled' if busy else 'readonly')
+        keys = selected_keys()
+        for widget in (write_entry, write_button, freeze_button):
+            widget.configure(state='normal' if keys and not busy else 'disabled')
+        release_button.configure(state='normal' if any(key in frozen for key in keys) and not busy else 'disabled')
+
+    def change_page(delta=0):
+        nonlocal page
+        page = max(0, page+delta) if delta else 0
+        display()
+
+    def copy_address(event=None):
+        keys = selected_keys()
+        if keys:
+            root.clipboard_clear(); root.clipboard_append('\n'.join(hex(key[0]) for key in keys))
+            status.set(f'{len(keys)} Adressen kopiert.')
+        return 'break'
+
+    refresh_button = ttk.Button(connection, text='Aktualisieren', command=refresh); refresh_button.grid(row=0, column=2)
+    detect_button = ttk.Button(connection, text='Spiel erkennen', command=lambda:refresh(True)); detect_button.grid(row=0, column=3, padx=(8, 0))
+    ttk.Checkbutton(connection, text='Nur GE-Wine / Wine', variable=wine_only, command=refresh).grid(row=1, column=1, sticky='w', pady=(8, 0))
+    ttk.Button(connection, text='GE-Wine öffnen', command=launch_ge_wine).grid(row=1, column=2, columnspan=2, sticky='e', pady=(8, 0))
+    first_button = ttk.Button(buttons, text='Erstsuche', command=lambda:start_scan(True), style='Accent.TButton'); first_button.grid(row=0, column=0, sticky='ew', pady=(0, 6))
+    refine_button = ttk.Button(buttons, text='Folgesuche', command=lambda:start_scan(False)); refine_button.grid(row=1, column=0, sticky='ew', pady=(0, 6))
+    stop_button = ttk.Button(buttons, text='Suche abbrechen', command=cancel.set); stop_button.grid(row=2, column=0, sticky='ew')
+    prev_button = ttk.Button(pagination, text='Zurück', command=lambda:change_page(-1)); prev_button.pack(side='left', padx=(12, 6))
+    next_button = ttk.Button(pagination, text='Weiter', command=lambda:change_page(1)); next_button.pack(side='left')
+    write_button = ttk.Button(edit, text='Schreiben', command=write_values, style='Accent.TButton'); write_button.grid(row=2, column=2, padx=(0, 6))
+    freeze_button = ttk.Button(edit, text='Einfrieren', command=lambda:write_values(True)); freeze_button.grid(row=2, column=3, padx=(0, 6))
+    release_button = ttk.Button(edit, text='Freigeben', command=unfreeze); release_button.grid(row=2, column=4)
+    # Semantic handles also allow UI tests without depending on the layout.
+    root.memory_widgets = dict(tree=tree, search=search_entry, write=write_entry, first=first_button,
+                               refine=refine_button, freeze=freeze_button, release=release_button,
+                               filter=filter_box, next=next_button, previous=prev_button, live=live_enabled)
     process_box.bind('<<ComboboxSelected>>',lambda event:choose_process())
+    filter_box.bind('<<ComboboxSelected>>', lambda event:change_page())
     tree.bind('<<TreeviewSelect>>',selection_changed)
+    tree.bind('<Control-c>', copy_address)
+    search_entry.bind('<Return>', lambda event:start_scan(not bool(results)))
+    root.bind('<Escape>', lambda event:cancel.set() if busy else None)
+    root.bind('<Control-r>', lambda event:refresh())
+    root.bind('<Control-f>', lambda event:search_entry.focus_set())
 
     def poll():
         nonlocal busy, results, live, watching
@@ -659,7 +757,7 @@ def gui(initial_pid=None):
             if action=='progress':
                 status.set(data)
             else:
-                busy = False; process_box.configure(state='readonly')
+                busy = False; progress.stop(); sync_controls()
                 if action=='result':
                     results,note = data
                     discarded = set(frozen)-set(results)
@@ -676,7 +774,7 @@ def gui(initial_pid=None):
             try:
                 for key,data in list(frozen.items()):
                     memory.write(key[0],data)
-                if visible_keys:
+                if visible_keys and live_enabled.get():
                     # Refresh viewport and selected hits, not all 100k scan candidates.
                     top = int(tree.yview()[0]*len(visible_keys))
                     count = max(5, tree.winfo_height()//18+5)
@@ -700,7 +798,8 @@ def gui(initial_pid=None):
             memory.close()
         root.destroy()
 
-    refresh(auto=True)
+    refresh(auto=initial_pid is None)
+    display()
     root.protocol('WM_DELETE_WINDOW',close)
     root.after(300,poll)
     root.mainloop()

@@ -185,6 +185,64 @@ class MemoryTests(unittest.TestCase):
         self.assertIsNone(memory.preferred_game([other,memory.ProcessInfo(800,'second.exe','/p',3*1024**3,True)]))
 
     @unittest.skipUnless(os.environ.get('DISPLAY'), 'Requires X display')
+    def test_gui_pagination_type_filter_and_action_states(self):
+        import tkinter as tk
+        original = tk.Tk
+        failures = []
+        base = self.addresses['start'] + 64
+        hits = {}
+        for index in range(1100):
+            hit = memory.Hit(base + index*8, 'Int32', bytes(4), bytes(4))
+            hits[hit.key] = hit
+        hit = memory.Hit(base, 'Float32', bytes(4), bytes(4))
+        hits[hit.key] = hit
+
+        def factory():
+            root = original()
+            def finish():
+                for timer in root.tk.call('after', 'info'):
+                    root.after_cancel(timer)
+                root.tk.call(root.protocol('WM_DELETE_WINDOW'))
+            def verify(attempt=0):
+                try:
+                    widgets = root.memory_widgets
+                    tree = widgets['tree']
+                    if attempt == 0:
+                        self.assertTrue(widgets['refine'].instate(['disabled']))
+                        self.assertTrue(widgets['write'].instate(['disabled']))
+                        widgets['first'].invoke()
+                    if not tree.get_children():
+                        self.assertLess(attempt, 40)
+                        root.after(100, lambda:verify(attempt+1)); return
+                    self.assertEqual(len(tree.get_children()), 500)
+                    widgets['next'].invoke()
+                    self.assertEqual(len(tree.get_children()), 500)
+                    widgets['next'].invoke()
+                    self.assertEqual(len(tree.get_children()), 101)
+                    self.assertTrue(widgets['next'].instate(['disabled']))
+                    widgets['filter'].set('Float32')
+                    widgets['filter'].event_generate('<<ComboboxSelected>>')
+                    self.assertEqual(len(tree.get_children()), 1)
+                    self.assertTrue(widgets['previous'].instate(['disabled']))
+                    tree.selection_set(tree.get_children()[0])
+                    tree.event_generate('<<TreeviewSelect>>')
+                    self.assertFalse(widgets['write'].instate(['disabled']))
+                    self.assertTrue(widgets['release'].instate(['disabled']))
+                    widgets['filter'].set('UInt16')
+                    widgets['filter'].event_generate('<<ComboboxSelected>>')
+                    self.assertEqual(len(tree.get_children()), 0)
+                    self.assertTrue(widgets['write'].instate(['disabled']))
+                    self.assertFalse(widgets['refine'].instate(['disabled']))
+                    finish()
+                except Exception as error:
+                    failures.append(str(error)); finish()
+            root.after(200, verify)
+            return root
+        outcome = memory.ScanResult(hits, 4096, 0, set())
+        with patch('tkinter.Tk', factory), patch.object(memory, 'scan_types', return_value=outcome):
+            memory.gui(self.child.pid)
+        self.assertEqual(failures, [])
+
     def test_gui_scan_and_write_real_child(self):
         import tkinter as tk
         original = tk.Tk
@@ -197,12 +255,12 @@ class MemoryTests(unittest.TestCase):
 
             def check(attempt=0):
                 try:
-                    tree = next(w for w in root.winfo_children() if w.winfo_class() == 'Treeview')
-                    frames = {int(w.grid_info()['row']): w for w in root.winfo_children() if w.winfo_class() == 'TFrame'}
+                    frames = root.memory_widgets
+                    tree = frames['tree']
                     if attempt == 0:
-                        entry = next(w for w in frames[3].winfo_children() if w.winfo_class() == 'TEntry')
+                        entry = frames['search']
                         entry.delete(0,'end'); entry.insert(0,'1370291737')
-                        button = next(w for w in frames[4].winfo_children() if w.cget('text') == 'Erstsuche')
+                        button = frames['first']
                         button.invoke()
                     if tree.exists(f'{address}:Int32'):
                         self.state('change')
@@ -219,9 +277,10 @@ class MemoryTests(unittest.TestCase):
                     values = tree.item(f'{address}:Int32','values')
                     live_checks.append(tuple(str(v) for v in values[2:5]))
                     tree.selection_set(f'{address}:Int32')
-                    entry = next(w for w in frames[6].winfo_children() if w.winfo_class()=='TEntry')
+                    tree.event_generate('<<TreeviewSelect>>')
+                    entry = frames['write']
                     entry.delete(0,'end'); entry.insert(0,'45454545')
-                    next(w for w in frames[6].winfo_children() if w.winfo_class()=='TButton' and w.cget('text')=='Einfrieren').invoke()
+                    frames['freeze'].invoke()
                     checks.append(self.state()['number'])
                     self.state('change')
                     root.after(600,lambda: check_frozen(tree,frames))
@@ -232,7 +291,7 @@ class MemoryTests(unittest.TestCase):
                 try:
                     checks.append(self.state()['number'])
                     tree.selection_set(f'{address}:Int32')
-                    next(w for w in frames[6].winfo_children() if w.winfo_class() == 'TButton' and w.cget('text') == 'Freigeben').invoke()
+                    frames['release'].invoke()
                     self.state('change')
                     root.after(400, lambda: (checks.append(self.state()['number']), finish()))
                 except Exception as error:

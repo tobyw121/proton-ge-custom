@@ -36,8 +36,8 @@ Windows-/GPU-Tests sind darin nicht enthalten.
 ```sh
 bash standalone/build_deb.sh /tmp/ge-wine-dist
 cd /tmp/ge-wine-dist
-sha256sum -c ge-wine_0.8.0_amd64.deb.sha256
-sudo apt install ./ge-wine_0.8.0_amd64.deb
+sha256sum -c ge-wine_0.9.0_amd64.deb.sha256
+sudo apt install ./ge-wine_0.9.0_amd64.deb
 ```
 
 Anschließend im Anwendungsmenü **GE-Wine** öffnen oder:
@@ -447,3 +447,21 @@ ist die Auswahl manuell. Bereits gewaehlte Zielprozesse werden nicht allein
 wegen eines anderen RAM-Verbrauchs gewechselt. **Hauptprozess**, RSS und
 Kandidaten-Markierung erscheinen in der Prozessauswahl. RAM-Verbrauch allein
 beweist keine Spieleigenschaft und die Auswahl gibt keine zusaetzlichen Zugriffsrechte.
+
+
+## GE-Memory ab 0.9.0
+
+Die dunkle Oberfläche führt von der Prozessauswahl über die Suche zur Bearbeitung.
+Erstsuche sucht einen exakten Wert; der Vergleich gilt nur für die Folgesuche.
+Nicht verfügbare Aktionen sind deaktiviert. Automatisch berücksichtigt alle elf Datentypen.
+
+Die Trefferliste lässt sich nach Typ filtern und mit 500 Treffern je Seite vollständig
+durchblättern. Aktuelle Werte werden live gelesen, Änderungen kurz gelb markiert.
+„Live-Werte“ pausiert nur die Anzeige; eingefrorene Werte bleiben fixiert.
+Letzte Suche und Erstwert bleiben als Vergleich erhalten. Einfrieren schreibt den
+eingegebenen Wert regelmäßig, Freigeben beendet dies für die Auswahl.
+
+Schreiben verwendet den ursprünglichen Datentyp und liest das Ergebnis zurück.
+Strg+C kopiert ausgewählte Adressen, Strg+F fokussiert den Suchwert, Strg+R
+aktualisiert Prozesse, Eingabe startet Erst- oder Folgesuche, Escape bricht eine Suche ab.
+Beim Prozesswechsel werden Treffer und Fixierungen verworfen.
