@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import threading
 import tempfile
+import sys
 import time
 
 from ge_wine_sessions import TAG, identity
@@ -104,35 +105,39 @@ class RunLog:
 
     def snapshot(self):
         current = {}
-        for path in Path('/proc').iterdir():
-            if not path.name.isdigit():
-                continue
-            pid = int(path.name)
-            stamp = identity(pid)
-            if stamp is None:
-                continue
-            try:
-                # Do not persist the rest of the environment (credentials, cookies, etc.).
-                entries = (path / 'environ').read_bytes().split(b'\0')
-                tagged = (TAG + '=' + self.token).encode() in entries
-                in_prefix = any(('WINEPREFIX=' + prefix).encode() in entries for prefix in self.prefixes)
-                if not (tagged or in_prefix):
+        if sys.platform=='darwin':
+            from ge_wine_macos_runtime import process_snapshot
+            current = process_snapshot(self.token,self.prefixes)
+        else:
+            for path in Path('/proc').iterdir():
+                if not path.name.isdigit():
                     continue
-                stat = (path / 'stat').read_text().rsplit(') ', 1)[1].split()
-                command = [part.decode('utf-8', 'replace') for part in (path / 'cmdline').read_bytes().split(b'\0') if part]
-                name = (path / 'comm').read_text().strip()
+                pid = int(path.name)
+                stamp = identity(pid)
+                if stamp is None:
+                    continue
                 try:
-                    executable = os.readlink(path / 'exe')
-                except OSError:
-                    executable = None
-                if identity(pid) != stamp:
+                    # Do not persist the rest of the environment (credentials, cookies, etc.).
+                    entries = (path / 'environ').read_bytes().split(b'\0')
+                    tagged = (TAG + '=' + self.token).encode() in entries
+                    in_prefix = any(('WINEPREFIX=' + prefix).encode() in entries for prefix in self.prefixes)
+                    if not (tagged or in_prefix):
+                        continue
+                    stat = (path / 'stat').read_text().rsplit(') ', 1)[1].split()
+                    command = [part.decode('utf-8', 'replace') for part in (path / 'cmdline').read_bytes().split(b'\0') if part]
+                    name = (path / 'comm').read_text().strip()
+                    try:
+                        executable = os.readlink(path / 'exe')
+                    except OSError:
+                        executable = None
+                    if identity(pid) != stamp:
+                        continue
+                    key = (pid, stamp)
+                    current[key] = dict(pid=pid, start_ticks=stamp, parent=int(stat[1]), name=name,
+                                        command=command, executable=executable,
+                                        association='session' if tagged else 'shared-prefix')
+                except (OSError, ValueError, IndexError):
                     continue
-                key = (pid, stamp)
-                current[key] = dict(pid=pid, start_ticks=stamp, parent=int(stat[1]), name=name,
-                                    command=command, executable=executable,
-                                    association='session' if tagged else 'shared-prefix')
-            except (OSError, ValueError, IndexError):
-                continue
         for key, row in current.items():
             if key not in self.known:
                 self.event('process_observed', **row)

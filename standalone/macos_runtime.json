@@ -1,0 +1,12 @@
+{
+  "wine": {
+    "version": "11.0_1",
+    "sha256": "b50dc50ec7f41d58b115a6b685d4d1315ba3c797bd3aa0f49213f2703cb82388",
+    "url": "https://github.com/Gcenx/macOS_Wine_builds/releases/download/11.0_1/wine-stable-11.0_1-osx64.tar.xz"
+  },
+  "gstreamer": {
+    "version": "1.28.6",
+    "sha256": "a8eb366c59b7e9e5dc049848fed6bcd203a8878aa7517c051639fda78797c6ad",
+    "url": "https://gstreamer.freedesktop.org/data/pkg/osx/1.28.6/gstreamer-1.0-1.28.6-universal.pkg"
+  }
+}

@@ -14,6 +14,9 @@ TAG = "GE_WINE_SESSION_ID"
 
 
 def identity(pid):
+    if sys.platform == 'darwin':
+        from ge_wine_macos_runtime import process_identity
+        return process_identity(pid)
     try:
         path = Path('/proc') / str(pid)
         if path.stat().st_uid != os.getuid():
@@ -25,13 +28,18 @@ def identity(pid):
 
 
 def records_directory():
-    base = Path(os.environ.get('XDG_STATE_HOME', str(Path.home() / '.local/state')))
+    default = Path.home()/'Library/Application Support' if sys.platform=='darwin' else Path.home()/'.local/state'
+    base = Path(os.environ.get('XDG_STATE_HOME', str(default)))
     path = base / 'ge-wine/sessions'
     path.mkdir(parents=True, exist_ok=True, mode=0o700)
     return path
 
 
 def marked_processes():
+    if sys.platform=='darwin':
+        from ge_wine_macos_runtime import marked_processes as native_marked
+        yield from native_marked()
+        return
     for path in Path('/proc').iterdir():
         if not path.name.isdigit() or identity(int(path.name)) is None:
             continue

@@ -1,0 +1,87 @@
+name: GE-Wine macOS
+on:
+  workflow_dispatch:
+  push:
+    paths: ['standalone/**', '.github/workflows/ge-wine-macos.yml']
+  pull_request:
+    paths: ['standalone/**', '.github/workflows/ge-wine-macos.yml']
+permissions:
+  contents: read
+jobs:
+  macos:
+    name: macOS ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15-intel
+            arch: x86_64
+            python_arch: x64
+          - runner: macos-15
+            arch: arm64
+            python_arch: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: false
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          architecture: ${{ matrix.python_arch }}
+      - name: Install build dependencies
+        run: |
+          test "$(uname -m)" = '${{ matrix.arch }}'
+          python3 -m pip install -r standalone/requirements-macos.txt
+      - name: Test macOS frontend, runtime setup and process tracking
+        run: python3 -m unittest discover -s standalone/tests -p test_macos.py -v
+      - name: Build app, DMG and ZIP
+        run: bash standalone/build_macos.sh "$GITHUB_WORKSPACE/dist/macos"
+      - name: Native Wine smoke test (Intel)
+        if: matrix.arch == 'x86_64'
+        run: |
+          python3 - <<'PY'
+          import sys
+          sys.path.insert(0,'standalone')
+          from ge_wine_macos_runtime import download, manifest
+          from pathlib import Path
+          spec=manifest()['gstreamer']
+          download(spec,Path('dist/gstreamer.pkg'),print)
+          PY
+          sudo installer -pkg dist/gstreamer.pkg -target /
+          ditto -x -k dist/macos/ge-wine_0.13.0_macos_x86_64.zip dist/smoke
+          python3 standalone/tests/macos_smoke.py dist/smoke.exe
+          python3 - <<'PY'
+          import os, subprocess
+          from pathlib import Path
+          executable=Path('dist/smoke/GE-Wine.app/Contents/MacOS/GE-Wine').resolve()
+          probe=Path('dist/smoke.exe').resolve()
+          prefix=Path('dist/smoke-prefix').resolve()
+          result=subprocess.run([str(executable),'--no-shortcuts','--prefix',str(prefix),str(probe)],
+                                env=dict(os.environ,WINEDLLOVERRIDES='mscoree,mshtml,winemenubuilder.exe=d'),timeout=180)
+          assert result.returncode==42, f'Windows probe returned {result.returncode}, expected 42'
+          assert list((prefix/'logs').glob('*/repetitions.jsonl')), 'Missing per-instance logs'
+          PY
+      - name: Upload macOS package
+        uses: actions/upload-artifact@v5
+        with:
+          name: ge-wine-macos-${{ matrix.arch }}
+          path: |
+            dist/macos/*.dmg
+            dist/macos/*.zip
+            dist/macos/*.sha256
+          if-no-files-found: error
+          retention-days: 14
+      - name: Build summary
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
+          ## GE-Wine macOS
+          Download the architecture-specific artifact and move GE-Wine.app to Applications.
+          Python and Tk are bundled. Native Wine is downloaded on first use with SHA256 verification.
+          GStreamer requires its standard macOS installer. Apple Silicon requires Rosetta 2 for Intel Wine.
+          This is a native Wine frontend, not a macOS port of Linux GE-Proton.
+          The app is ad-hoc signed, not Developer-ID signed or notarized.
+          GE-Memory and the Linux speedhack are not part of the macOS package.
+          EOF

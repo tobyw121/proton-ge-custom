@@ -1,0 +1,5 @@
+# Hosted label introduced after the locally installed actionlint release.
+# This lint allowlist does not change which runner GitHub uses.
+self-hosted-runner:
+  labels:
+    - macos-15-intel

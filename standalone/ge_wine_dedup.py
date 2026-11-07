@@ -3,6 +3,7 @@
 from datetime import datetime
 from collections import OrderedDict
 import fcntl
+import errno
 import hashlib
 import json
 import os
@@ -10,6 +11,7 @@ from pathlib import Path
 import re
 import sqlite3
 import stat
+import sys
 import tempfile
 import threading
 import time
@@ -192,7 +194,11 @@ class LogIndex:
             os.replace(temporary,target)
             descriptor = os.open(self.root,os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
             try:
-                os.fsync(descriptor)
+                try:
+                    os.fsync(descriptor)
+                except OSError as error:
+                    if sys.platform!='darwin' or error.errno not in (errno.EINVAL,errno.ENOTSUP):
+                        raise
             finally:
                 os.close(descriptor)
         finally:
@@ -270,6 +276,9 @@ class LiveLogReader:
 
 def open_writers(root):
     """Best-effort /proc check, including writers which outlive the launcher."""
+    if sys.platform=='darwin':
+        from ge_wine_macos_runtime import open_log_writers
+        return open_log_writers(root)
     root = str(Path(root).resolve()) + '/'
     writers = set()
     for process in Path('/proc').iterdir():

@@ -26,7 +26,7 @@ from ge_wine_desktop import (windows_links, installer, installed_shortcuts,
                              program_shortcut, write_shortcut)
 
 
-VERSION = "0.12.1"
+VERSION = "0.13.0"
 PINNED_PROTON = "GE-Proton11-11-x86_64"
 PROTON_URL = ("https://github.com/GloriousEggroll/proton-ge-custom/releases/download/"
               "GE-Proton11-11/GE-Proton11-11-x86_64.tar.gz")
@@ -522,6 +522,9 @@ def gui(options):
 
 
 def main(argv=None):
+    if sys.platform=='darwin':
+        from ge_wine_macos import main as macos_main
+        return macos_main(argv)
     parser = argparse.ArgumentParser(description="Windows-Programme mit GE-Proton starten.")
     parser.add_argument("--version", action="version", version=f"GE-Wine {VERSION}")
     parser.add_argument("--compact-logs", metavar="ORDNER", help="Abgeschlossenen datierten GE-Wine-Logordner von Duplikaten bereinigen")

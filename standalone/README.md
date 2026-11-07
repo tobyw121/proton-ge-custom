@@ -36,8 +36,8 @@ Windows-/GPU-Tests sind darin nicht enthalten.
 ```sh
 bash standalone/build_deb.sh /tmp/ge-wine-dist
 cd /tmp/ge-wine-dist
-sha256sum -c ge-wine_0.12.1_amd64.deb.sha256
-sudo apt install ./ge-wine_0.12.1_amd64.deb
+sha256sum -c ge-wine_0.13.0_amd64.deb.sha256
+sudo apt install ./ge-wine_0.13.0_amd64.deb
 ```
 
 Anschließend im Anwendungsmenü **GE-Wine** öffnen oder:
@@ -669,3 +669,19 @@ Die tatsächliche Ausführung kann unter hoher System-/Datenträgerlast verzöge
 `line_reference: raw-live` in der Wiederholungsübersicht verweist auf die Zeile der
 noch offenen Rohdatei. `line_reference: compact` verweist auf eine bereits
 kompaktierte Datei, insbesondere die laufend gefilterte Konsole.
+
+
+## macOS-Build ab 0.13.0
+
+GitHub Actions baut zusätzlich eine native `GE-Wine.app` als DMG und ZIP für
+Intel (`x86_64`) und Apple Silicon (`arm64`). Python/Tk und die Prozessbibliothek
+sind enthalten. Wine für macOS wird beim ersten Start SHA256-geprüft nachgeladen.
+Die Laufzeitquelle ist in `macos_runtime.json` festgelegt; die Archive von Linux-
+GE-Proton werden auf dem Mac nicht verwendet.
+
+Voraussetzungen und Unterschiede stehen in [README-macos.md](README-macos.md).
+Die gewählte Intel-Wine-Laufzeit braucht auf Apple Silicon Rosetta 2 sowie unter
+macOS GStreamer.framework über dessen regulären Installer. Die App ist nicht
+notarisiert. Mac-Icarus-Prefixe sind getrennt; die Linux-GE10/GE11-Patches und
+GE-Memory/Speedhack werden nicht als Mac-kompatibel ausgegeben. Die Linux-Ausgabe
+behält ihre bisherigen Proton-Pins und Funktionen.

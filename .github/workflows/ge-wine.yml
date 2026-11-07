@@ -32,7 +32,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            python3 python3-tk python3-xlib python3-urllib3 python3-truststore \
+            python3 python3-tk python3-psutil python3-xlib python3-urllib3 python3-truststore \
             ca-certificates git dpkg-dev xz-utils tar libvulkan1 gcc-multilib libc6-dev-i386 \
             xvfb xauth desktop-file-utils libglib2.0-bin
 
@@ -42,13 +42,13 @@ jobs:
       - name: Build Debian package and source archive
         run: |
           bash standalone/build_deb.sh "$DIST_DIR"
-          tar --exclude=__pycache__ -czf "$DIST_DIR/ge-wine-0.12.1-source.tar.gz" standalone
+          tar --exclude=__pycache__ -czf "$DIST_DIR/ge-wine-0.13.0-source.tar.gz" standalone
 
       - name: Verify and install package
         run: |
           cd "$DIST_DIR"
-          sha256sum -c ge-wine_0.12.1_amd64.deb.sha256
-          sudo apt-get install -y ./ge-wine_0.12.1_amd64.deb
+          sha256sum -c ge-wine_0.13.0_amd64.deb.sha256
+          sudo apt-get install -y ./ge-wine_0.13.0_amd64.deb
           ge-wine --version
           ge-memory --help
           PYTHONPATH=/usr/lib/ge-wine/backend /usr/bin/python3 -m umu --version
@@ -73,7 +73,7 @@ jobs:
           cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
           ## GE-Wine for Linux Mint 22 / Ubuntu 24.04 (amd64)
           Download and extract the `ge-wine-mint22-ubuntu24.04-amd64` artifact.
-          Install with `sudo apt install ./ge-wine_0.12.1_amd64.deb`.
+          Install with `sudo apt install ./ge-wine_0.13.0_amd64.deb`.
           Launch GE-Wine from the application menu or run `ge-wine program.exe`.
 
           The package includes the GUI, CLI and private UMU backend.
