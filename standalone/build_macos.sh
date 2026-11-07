@@ -17,7 +17,7 @@ codesign --force --deep --sign - "$build_dir/dist/GE-Wine.app"
 codesign --verify --deep --strict "$build_dir/dist/GE-Wine.app"
 "$build_dir/dist/GE-Wine.app/Contents/MacOS/GE-Wine" --doctor
 architecture=$(uname -m)
-name="ge-wine_0.13.0_macos_$architecture"
+name="ge-wine_0.13.1_macos_$architecture"
 mkdir -p "$build_dir/image"
 cp -R "$build_dir/dist/GE-Wine.app" "$build_dir/image/GE-Wine.app"
 ln -s /Applications "$build_dir/image/Applications"

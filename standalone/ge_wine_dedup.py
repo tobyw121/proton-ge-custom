@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Disk-backed log deduplication; only known timestamp prefixes are ignored."""
+"""Disk-backed log deduplication; Wine envelopes are excluded from content fingerprints."""
 from datetime import datetime
 from collections import OrderedDict
 import fcntl
@@ -19,6 +19,7 @@ import time
 ANSI = re.compile(rb'\x1b\[[0-?]*[ -/]*[@-~]')
 ISO = re.compile(rb'^\[(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?)\]\s*')
 WINE = re.compile(rb'^(\d+\.\d+):(?=[0-9a-fA-F]{4,16}:)')
+WINE_ENVELOPE = re.compile(rb'^(?:[0-9a-fA-F]{4,16}:){1,2}(?=(?:trace|warn|err|fixme):)')
 CHANNEL = re.compile(rb'^(\[(?:stdout|stderr|ge-wine)\] )')
 
 
@@ -27,7 +28,7 @@ def now():
 
 
 def canonical(line, console=False, structured=False):
-    """Retain payload, PID/TID, numbers and whitespace. Never scrub addresses."""
+    """Ignore Wine timestamp/PID/TID envelopes; retain severity, channel and payload exactly."""
     line = line.rstrip(b'\r\n')
     if structured:
         try:
@@ -51,6 +52,7 @@ def canonical(line, console=False, structured=False):
     match = ISO.match(value) or WINE.match(value)
     if match:
         runtime_stamp = match[1].decode('ascii'); value = value[match.end():]
+    value = WINE_ENVELOPE.sub(b'', value, count=1)
     return prefix + value, runtime_stamp
 
 

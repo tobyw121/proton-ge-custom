@@ -65,6 +65,8 @@ def write_shortcut(options,environment,executable,profile,report,arguments=None,
         command += ['--wine',options.wine]
     if options.full_trace:
         command += ['--full-trace']
+    if getattr(options,'no_network_log',False):
+        command += ['--no-network-log']
     command += [str(executable),*(options.arguments if arguments is None else arguments)]
     binary.write_text('#!/bin/sh\nexec '+shlex.join(command)+'\n');binary.chmod(0o755)
     with (folder/'Contents/Info.plist').open('wb') as output:
@@ -89,7 +91,7 @@ def installed_links(options,environment,executable,profile,before,report):
 def launch(options,session,report,output=None,interactive=False):
     executable,profile,environment,arguments = prepare(options)
     before=windows_links(environment['WINEPREFIX'])
-    recording = RunLog(environment,['native-wine',*arguments],str(executable.parent),profile,session.token,options.full_trace)
+    recording = RunLog(environment,['native-wine',*arguments],str(executable.parent),profile,session.token,options.full_trace,network_log=not getattr(options,'no_network_log',False))
     session.log=recording
     def logged(text):
         visible=recording.console('ge-wine',text)
@@ -131,6 +133,7 @@ def gui(options):
     wine=tk.StringVar(value=options.wine or '');profile=tk.StringVar(value=options.profile)
     if sys.platform=='darwin':
         root.createcommand('::tk::mac::OpenDocument',lambda *paths:executable.set(paths[0]) if paths else None)
+    network_log=tk.BooleanVar(value=not getattr(options,'no_network_log',False))
     full_trace=tk.BooleanVar(value=options.full_trace)
     values=[('Windows-Programm',executable),('Argumente',arguments),('Prefix (leer = automatisch)',prefix),('Wine.app (leer = automatisch)',wine)]
     for row,(label,variable) in enumerate(values):
@@ -145,6 +148,7 @@ def gui(options):
     ttk.Label(root,text='Profil').grid(row=4,column=0,sticky='w',padx=14)
     ttk.Combobox(root,textvariable=profile,values=list(PROFILES),state='readonly').grid(row=4,column=1,sticky='ew',padx=8)
     ttk.Checkbutton(root,text='API-Aufrufe protokollieren (langsam / große Logs)',variable=full_trace).grid(row=5,column=0,columnspan=3,sticky='w',padx=14,pady=10)
+    ttk.Checkbutton(root,text='Netzwerkverbindungen protokollieren',variable=network_log).grid(row=6,column=0,sticky='w',padx=14)
     status=tk.StringVar(value='Wine für macOS wird automatisch eingerichtet. Apple Silicon benötigt Rosetta 2.\nGStreamer wird bei Bedarf über den macOS-Installationsdialog eingerichtet.')
     ttk.Label(root,textvariable=status,wraplength=800).grid(row=7,column=0,columnspan=3,sticky='w',padx=14,pady=8)
     display=ScrolledText(root,height=16,state='disabled');display.grid(row=8,column=0,columnspan=3,sticky='nsew',padx=14,pady=10)
@@ -152,7 +156,7 @@ def gui(options):
     def start():
         nonlocal running
         try:
-            chosen=argparse.Namespace(executable=executable.get(),arguments=shlex.split(arguments.get()),prefix=prefix.get(),wine=wine.get(),profile=profile.get(),full_trace=full_trace.get(),no_shortcuts=options.no_shortcuts)
+            chosen=argparse.Namespace(executable=executable.get(),arguments=shlex.split(arguments.get()),prefix=prefix.get(),wine=wine.get(),profile=profile.get(),full_trace=full_trace.get(),no_network_log=not network_log.get(),no_shortcuts=options.no_shortcuts)
             prepare(chosen)
         except (OSError,ValueError) as error:
             messagebox.showerror('GE-Wine',str(error));return
@@ -198,6 +202,7 @@ def main(argv=None):
     parser.add_argument('--version',action='version',version=f'GE-Wine macOS {VERSION}')
     parser.add_argument('--gui',action='store_true');parser.add_argument('--wine',help='Native Wine.app oder ausführbare wine-Datei; Standard: automatischer Download')
     parser.add_argument('--prefix');parser.add_argument('--profile',choices=PROFILES,default='auto')
+    parser.add_argument('--no-network-log',action='store_true')
     parser.add_argument('--full-trace',action='store_true');parser.add_argument('--no-shortcuts',action='store_true')
     parser.add_argument('--kill-all',action='store_true');parser.add_argument('--compact-logs',metavar='ORDNER')
     parser.add_argument('--doctor',action='store_true',help='macOS-Build und gebündelte Python-/Tk-Version prüfen')

@@ -161,7 +161,7 @@ class DedupTests(unittest.TestCase):
                         process.kill();process.wait()
                     process.stdout.close();process.stderr.close()
 
-    def test_timestamps_are_ignored_but_pid_tid_parameters_and_channels_are_kept(self):
+    def test_wine_envelopes_are_ignored_but_payload_and_channels_are_kept(self):
         log = self.recording()
         first = '100.001:00ab:00cd:trace:call: value=10\n'
         self.assertEqual(log.console('stderr',first),first)
@@ -169,17 +169,18 @@ class DedupTests(unittest.TestCase):
         self.assertEqual(log.console('stderr','other message\n'),'other message\n')
         self.assertEqual(log.console('stderr','100.003:00ab:00cd:trace:call: value=10\n'),'')
         for text in ('100.004:00ef:00cd:trace:call: value=10\n',
-                     '100.004:00ab:00ef:trace:call: value=10\n',
-                     '100.004:00ab:00cd:trace:call: value=11\n'):
-            self.assertEqual(log.console('stderr',text),text)
+                     '100.004:00ab:00ef:trace:call: value=10\n'):
+            self.assertEqual(log.console('stderr',text),'')
+        changed='100.005:00ab:00cd:trace:call: value=11\n'
+        self.assertEqual(log.console('stderr',changed),changed)
         self.assertEqual(log.console('stdout',first),first)
         log.close()
-        self.assertEqual(len((log.path/'console.log').read_text().splitlines()),6)
+        self.assertEqual(len((log.path/'console.log').read_text().splitlines()),4)
         repeated, = self.repetitions(log)
-        self.assertEqual(repeated['count'],3)
+        self.assertEqual(repeated['count'],5)
         self.assertEqual(repeated['line'],1)
         self.assertEqual(repeated['first_runtime_timestamp'],'100.001')
-        self.assertEqual(repeated['last_runtime_timestamp'],'100.003')
+        self.assertEqual(repeated['last_runtime_timestamp'],'100.004')
 
     def test_many_repetitions_use_one_line_and_keep_complete_count(self):
         log = self.recording()

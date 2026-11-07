@@ -597,8 +597,11 @@ und das Buildskript liegen auch unter `/usr/share/doc/ge-wine/`.
 GE-Wine behält pro Datei nur das erste Auftreten einer Meldung, auch wenn sie
 zwischen anderen Meldungen immer wieder auftaucht. Für den Vergleich werden
 ANSI-Farbcodes und bekannte vorangestellte Zeitstempel ignoriert (Wine-Laufzeit
-und ISO-Zeitstempel in eckigen Klammern). PID, Thread-ID, Adressen, Fehlercodes,
+und ISO-Zeitstempel in eckigen Klammern). Bei erkannten Wine-Meldungen werden
+auch die vorangestellten Prozess- und Thread-IDs ignoriert: derselbe Inhalt aus
+mehreren Prozessen erscheint einmal. Schweregrad, Wine-Kanal, Adressen, Fehlercodes,
 Parameter, Leerzeichen und unterschiedliche Ausgabekanäle bleiben unterscheidbar.
+Prozess-IDs innerhalb des Meldungsinhalts oder strukturierter Ereignisse bleiben erhalten.
 Die erste Originalzeile bleibt erhalten. Bei strukturierten GE-Wine-Ereignissen
 wird nur das äußere `time`-Feld beim Vergleich ignoriert.
 
@@ -685,3 +688,34 @@ macOS GStreamer.framework über dessen regulären Installer. Die App ist nicht
 notarisiert. Mac-Icarus-Prefixe sind getrennt; die Linux-GE10/GE11-Patches und
 GE-Memory/Speedhack werden nicht als Mac-kompatibel ausgegeben. Die Linux-Ausgabe
 behält ihre bisherigen Proton-Pins und Funktionen.
+
+
+## Netzwerkverbindungen automatisch protokollieren
+
+Neue Starts protokollieren standardmäßig die beobachteten TCP-/UDP-Sockets der
+der Sitzung bzw. dem Prefix zugeordneten Prozesse. Die Datei liegt unter
+`<Prefix>/logs/<Datum_Uhrzeit_Sitzung>/network.jsonl`. Jeder Eintrag enthält
+Zeitpunkt, Prozess-ID/Startkennung, Prozessnamen, Protokoll, lokale und entfernte
+IP/Port sowie den beobachteten Verbindungszustand. Neue Verbindungen, Änderungen
+und nicht mehr beobachtete Sockets werden erfasst; unveränderte Zustände erzeugen
+keine weiteren Zeilen. Wiederkehrende identische Ereignisse fließen in die
+20-sekündlich aktualisierte `repetitions.jsonl` ein.
+
+Die Abfrage erfolgt einmal pro Sekunde, unter Linux über die eigenen `/proc`-
+Socket-Deskriptoren und deren Netzwerk-Namensraum, unter macOS über psutil.
+Es werden keine fremden Host-Verbindungen allein wegen ihrer IP oder ihres Ports
+einer Instanz zugeschlagen. Bereits im Prefix laufende Prozesse können mehreren
+Aufzeichnungen desselben Prefixes zugeordnet sein. Zugriffsfehler werden als
+`network_coverage_error` erfasst. Die Einstellung und Grenzen stehen in
+`session.json` unter `network_logging`.
+
+Dies ist Verbindungsdiagnose, kein vollständiger Paketmitschnitt: kurzlebige
+Sockets und einzelne unverbundene UDP-Ziele können zwischen Abfragen fehlen.
+Es werden keine Paketinhalte, DNS-Abfragen, HTTP-Inhalte oder Byte-Zähler
+mitgeschnitten und keine TLS-Verbindungen entschlüsselt. Es sind keine
+Administratorrechte erforderlich. Für vollständige PCAP-Aufzeichnungen wäre
+ein zusätzlicher Capture-Mechanismus mit geeigneten Berechtigungen erforderlich.
+
+Abschalten: GUI-Häkchen „Netzwerkverbindungen protokollieren“ entfernen oder
+`ge-wine --no-network-log /pfad/Programm.exe` verwenden. Desktop-Verknüpfungen
+übernehmen diese Einstellung. Andere Logdateien bleiben aktiv.

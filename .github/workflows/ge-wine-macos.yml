@@ -36,7 +36,9 @@ jobs:
           test "$(uname -m)" = '${{ matrix.arch }}'
           python3 -m pip install -r standalone/requirements-macos.txt
       - name: Test macOS frontend, runtime setup and process tracking
-        run: python3 -m unittest discover -s standalone/tests -p test_macos.py -v
+        run: |
+          python3 -m unittest discover -s standalone/tests -p test_macos.py -v
+          python3 -m unittest discover -s standalone/tests -p test_network.py -v
       - name: Build app, DMG and ZIP
         run: bash standalone/build_macos.sh "$GITHUB_WORKSPACE/dist/macos"
       - name: Upload macOS package
@@ -60,7 +62,7 @@ jobs:
         if: matrix.arch == 'x86_64'
         timeout-minutes: 5
         run: |
-          ditto -x -k dist/macos/ge-wine_0.13.0_macos_x86_64.zip dist/smoke
+          ditto -x -k dist/macos/ge-wine_0.13.1_macos_x86_64.zip dist/smoke
           'dist/smoke/GE-Wine.app/Contents/MacOS/GE-Wine' --setup-runtime > dist/native-wine-path.txt
       - name: Native Windows executable smoke test (Intel)
         if: matrix.arch == 'x86_64'

@@ -45,6 +45,10 @@ Dateien und Logs
 ----------------
 Standard-Prefixe: ~/Library/Application Support/GE-Wine/prefixes/
 Logs: <Prefix>/logs/<Datum_Uhrzeit_Sitzung>/
+Netzwerkverbindungen werden standardmäßig in network.jsonl erfasst (TCP/UDP,
+Prozess, IP/Port, Zustand; Abfrage jede Sekunde, keine Pakete oder Nutzdaten).
+macOS kann den Zugriff verweigern; dies wird als network_coverage_error vermerkt.
+Abschalten über das GUI-Häkchen oder --no-network-log.
 Die Wiederholungsübersicht wird sofort angelegt und alle 20 Sekunden aktualisiert.
 „Sofort beenden“, profilbezogene Desktop-.app-Verknüpfungen und die Erkennung
 neuer Windows-.lnk-Verknüpfungen sind vorhanden. Prozessdetails werden unter macOS

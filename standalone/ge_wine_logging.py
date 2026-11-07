@@ -21,7 +21,7 @@ REPETITIONS_INTERVAL = 20
 
 
 class RunLog:
-    def __init__(self, environment, command, directory, profile, token, full_trace=False, clock=time.monotonic):
+    def __init__(self, environment, command, directory, profile, token, full_trace=False, clock=time.monotonic, network_log=True):
         prefix = Path(environment['WINEPREFIX'])
         prefix.mkdir(parents=True, exist_ok=True)
         base = prefix / 'logs'
@@ -30,14 +30,17 @@ class RunLog:
         self.path.mkdir(mode=0o700)
         self.lock = threading.RLock()
         self.streams = {}
-        for name in ('events.jsonl', 'console.log'):
+        for name in ('events.jsonl', 'console.log', 'network.jsonl'):
             fd = os.open(self.path / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             self.streams[name] = os.fdopen(fd, 'w', encoding='utf-8', buffering=1)
         self.index = LogIndex(self.path)
         self.live_reader = LiveLogReader(self.index)
         self.clock = clock
         self.next_repetitions_export = self.clock()+REPETITIONS_INTERVAL
-        self.lines = {"console.log": 0, "events.jsonl": 0}
+        self.lines = {name: 0 for name in self.streams}
+        self.network_enabled = network_log
+        self.network_known = {}
+        self.next_network_sample = 0
         self.closed = False
         self.token = token
         self.prefixes = {str(prefix), str(prefix / 'pfx')}
@@ -58,6 +61,9 @@ class RunLog:
                                           if key in {'WINEPREFIX', 'PROTONPATH', 'GAMEID', 'STORE', 'WINEDEBUG',
                                                      'PROTON_LOG', 'PROTON_LOG_DIR', 'DXVK_CONFIG', 'DXVK_HUD',
                                                      'DXVK_LOG_PATH', 'DXVK_LOG_LEVEL', 'UMU_LOG'}},
+                             network_logging=dict(enabled=network_log,file='network.jsonl',interval_seconds=1,
+                                                  coverage='sampled process-owned TCP/UDP endpoints and states; no packets, payloads or byte counters; short-lived sockets may be missed'),
+                             deduplication_policy='per-file content; ignore ANSI, known timestamps and Wine envelope PID/TID; preserve payload and structured process identity',
                              backend_log_layout='calls/NNNN/',
                              coverage='stdout/stderr, direct launches, Wine debug channels; ' + ('macOS' if sys.platform=='darwin' else 'Linux') + ' process sampling every 250 ms; no kernel syscall trace')
         self._metadata()
@@ -147,6 +153,26 @@ class RunLog:
             if key not in current:
                 self.event('process_no_longer_observed', pid=row['pid'], start_ticks=row['start_ticks'])
         self.known = current
+        if self.network_enabled and self.clock() >= self.next_network_sample:
+            self.snapshot_network(current)
+            self.next_network_sample = self.clock()+1
+
+    def snapshot_network(self, processes):
+        from ge_wine_network import connections
+        current,errors = connections(processes)
+        with self.lock:
+            def write(event, row):
+                payload = json.dumps(dict(time=timestamp(),event=event,**row),ensure_ascii=False)+'\n'
+                if self.index.record('network.jsonl',payload.encode(),self.lines['network.jsonl']+1,structured=True):
+                    self.streams['network.jsonl'].write(payload)
+                    self.lines['network.jsonl'] += 1
+            for key,row in current.items():
+                if key not in self.network_known:write('connection_observed',row)
+                elif row != self.network_known[key]:write('connection_changed',row)
+            for key,row in self.network_known.items():
+                if key not in current:write('connection_no_longer_observed',row)
+            for error in errors:write('network_coverage_error',dict(error=error))
+            self.network_known=current
 
     def publish_repetitions(self, scan_native=True):
         backlog,errors = self.live_reader.scan((self.path/'calls').rglob('*.log')) if scan_native else ([],[])
