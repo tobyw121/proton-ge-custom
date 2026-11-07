@@ -291,7 +291,7 @@ class LauncherTests(unittest.TestCase):
         result = self.run_cli("--profile", "icarus-phoenix", "--no-prerequisites", "--prefix", prefix, self.exe)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse((prefix / "winetricks.log").exists())
-        prefix.mkdir()
+        prefix.mkdir(exist_ok=True)
         (prefix / "winetricks.log").write_text("vcrun2022\n")
         result = self.run_cli("--profile", "icarus-phoenix", "--prefix", prefix, self.exe)
         self.assertEqual(result.returncode, 0, result.stderr)

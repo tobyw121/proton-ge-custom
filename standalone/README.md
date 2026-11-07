@@ -36,8 +36,8 @@ Windows-/GPU-Tests sind darin nicht enthalten.
 ```sh
 bash standalone/build_deb.sh /tmp/ge-wine-dist
 cd /tmp/ge-wine-dist
-sha256sum -c ge-wine_0.9.0_amd64.deb.sha256
-sudo apt install ./ge-wine_0.9.0_amd64.deb
+sha256sum -c ge-wine_0.10.0_amd64.deb.sha256
+sudo apt install ./ge-wine_0.10.0_amd64.deb
 ```
 
 Anschließend im Anwendungsmenü **GE-Wine** öffnen oder:
@@ -465,3 +465,66 @@ Schreiben verwendet den ursprünglichen Datentyp und liest das Ergebnis zurück.
 Strg+C kopiert ausgewählte Adressen, Strg+F fokussiert den Suchwert, Strg+R
 aktualisiert Prozesse, Eingabe startet Erst- oder Folgesuche, Escape bricht eine Suche ab.
 Beim Prozesswechsel werden Treffer und Fixierungen verworfen.
+
+
+## Automatische Prefix-Aufzeichnung ab 0.10.0
+
+Jeder Start über CLI, GUI oder eine GE-Wine-Verknüpfung erzeugt einen eigenen Ordner:
+`<Prefix>/logs/JJJJ-MM-TT_HH-MM-SS_Mikrosekunden_Sitzung/`. Der genaue Pfad steht
+auch in der Konsole bzw. im GUI-Protokoll. Bereits beim Einrichten der Laufzeiten
+werden Ausgaben gesammelt. Wiederholte und gleichzeitige Starts überschreiben sich nicht.
+
+- `session.json`: Profil, Proton-Pfad, Startaufruf, Arbeitsordner, ausgewählte
+  Diagnosevariablen, Start-/Endzeit, Rückgabecode und noch beobachtete Prozesse.
+- `console.log`: zeitgestempelte GE-Wine-Meldungen, stdout und stderr. Die
+  Konsolenausgabe bleibt gleichzeitig sichtbar.
+- `events.jsonl`: direkte Aufrufe mit Start/Ende und Rückgabecode sowie alle 250 ms
+  beobachtete Prozesse mit PID, Startkennung, Elternprozess, Namen, ausführbarer
+  Datei und Befehlszeile. Prozesse mit derselben Prefix-Variable werden als
+  `shared-prefix` gekennzeichnet, weil sie auch zu einer anderen Sitzung gehören können.
+- `calls/0001/`, `calls/0002/`, …: Proton- und DXVK-Dateien je Backend-Aufruf,
+  damit z. B. Winetricks und der anschließende Spielstart sich nicht überschreiben.
+  Die Dateien werden direkt von der gewählten Laufzeit erzeugt. Wine erhält
+  zusätzlich Prozess-, Thread-, DLL-, Modul- und Exception-Diagnosekanäle.
+
+Die Aufzeichnung läuft bis zum Ende des gestarteten Backends und seiner offenen
+Ausgabekanäle. Dauerhaft verbleibende Hintergrundprozesse stehen im Abschlussbericht.
+Sehr kurze Linux-Prozesse können zwischen zwei Stichproben fehlen; Wine-Prozesslogs
+und direkt protokollierte Aufrufe ergänzen diese Stichproben. Abbrüche durch
+Stromausfall oder SIGKILL/SIGTERM können den Abschlussbericht verhindern.
+Das ist keine vollständige Kernel-/Systemaufruf-Aufzeichnung.
+
+Zusätzlich für Wine-API-Aufrufe:
+
+```bash
+ge-wine --full-trace --prefix "$HOME/.local/share/ge-wine/prefixes/icarus-vfun" /pfad/VLauncher.exe
+```
+
+Alternativ in der GUI „API-Aufrufe aufzeichnen“ aktivieren. Dies ergänzt die
+Wine-Kanäle `relay` und `snoop`; deren Abdeckung hängt von Wine und der Anwendung
+ab. Es werden damit keine beliebigen nativen Linux-Funktionsaufrufe aufgezeichnet.
+Die Option kann sehr stark bremsen und enorme Logdateien erzeugen. Es gibt keine
+automatische Löschung oder Größenbegrenzung. `--diagnostics` schaltet weiterhin
+zusätzlich das GPU-/FPS-HUD ein; Dateilogs werden auch ohne diesen Schalter erstellt.
+
+Die Aufzeichnungsordner werden mit 0700, die GE-Wine-eigenen Dateien mit 0600
+angelegt. Das gesamte Prozess-Environment wird nicht gespeichert. Befehlszeilen,
+Programm-Ausgaben und API-Traces können trotzdem Anmeldedaten enthalten; vor dem
+Weitergeben prüfen. Externe Proton-/DXVK-Dateien verwenden deren eigene Dateirechte
+innerhalb des geschützten Ordners.
+
+## Präzisere RAM-Suche ab 0.10.0
+
+Unter „Suchoptionen“ lässt sich eine absolute Float-Toleranz einstellen, z. B.
+`0,1`, wenn die Anzeige gerundet `17,3` zeigt, im RAM aber `17,25` steht. Sie gilt
+für Float32/Float64 in Erst- und Folgesuche; die tolerante Erstsuche ist langsamer.
+`0` bleibt die schnelle exakte Suche. Die Treffer speichern stets die tatsächlich
+gelesenen Bytes, einschließlich Erstwert und Vergleichswert.
+
+Folgesuchen unterstützen zusätzlich „Nicht gleich“, „Groesser als“, „Kleiner als“,
+„Zwischen“ (einschließlich Grenzen) sowie „Um Wert gestiegen/gesunken“. Bei „Zwischen“
+ist der Suchwert die Untergrenze; die Obergrenze erscheint gesondert. Toleranz gilt
+auch für Float-Vergleiche und Änderungen. Integer werden weiterhin exakt behandelt.
+Die Vergleiche beziehen sich auf die letzte Suche, nicht auf die laufende Anzeige.
+Dies grenzt numerische Kandidaten ein; daraus lässt sich keine verlässliche Bedeutung
+einer Spielvariable oder ein serverseitiger Wert ableiten.

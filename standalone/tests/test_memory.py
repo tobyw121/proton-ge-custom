@@ -185,6 +185,44 @@ class MemoryTests(unittest.TestCase):
         self.assertIsNone(memory.preferred_game([other,memory.ProcessInfo(800,'second.exe','/p',3*1024**3,True)]))
 
     @unittest.skipUnless(os.environ.get('DISPLAY'), 'Requires X display')
+    def test_float_tolerance_finds_rounded_values_and_keeps_real_bytes(self):
+        address = self.addresses['floating']
+        region = memory.Region(address, address+4, 'rw-p')
+        patterns = memory.patterns_for('17.3', ['Float32'])
+        exact = memory.scan_types(self.mem, patterns, 0, threading.Event(), regions=[region])
+        self.assertFalse(exact.hits)
+        approximate = memory.scan_types(self.mem, patterns, 0, threading.Event(), regions=[region], float_tolerance=.1)
+        key = (address, 'Float32')
+        self.assertEqual(memory.unpack_value(approximate.hits[key].baseline, 'Float32'), 17.25)
+        refined = memory.refine_hits(self.mem, approximate.hits, 'Gleich', patterns, threading.Event(), float_tolerance=.1)
+        self.assertIn(key, refined)
+        self.assertFalse(memory.refine_hits(self.mem, refined, 'Gleich', patterns, threading.Event()))
+        self.mem.write(address, memory.pack_value('17.375', 'Float32'))
+        delta = memory.patterns_for('.125', ['Float32'])
+        found = memory.refine_hits(self.mem, refined, 'Um Wert gestiegen', delta, threading.Event())
+        self.assertIn(key, found)
+        self.assertEqual(found[key].initial, memory.pack_value('17.25', 'Float32'))
+        ranged = memory.refine_hits(self.mem, found, 'Zwischen', memory.patterns_for('17.2', ['Float32']),
+                                    threading.Event(), upper=memory.patterns_for('17.4', ['Float32']))
+        self.assertIn(key, ranged)
+        with self.assertRaises(ValueError):
+            memory.scan_types(self.mem, patterns, 0, threading.Event(), regions=[region], float_tolerance=float('nan'))
+
+    def test_numeric_comparisons_and_delta_keep_the_recorded_types(self):
+        address = self.addresses['number']
+        raw = memory.pack_value('1370291737', 'Int32')
+        hit = memory.Hit(address, 'Int32', raw, raw)
+        previous = {hit.key: hit}
+        self.mem.write(address, memory.pack_value('1370291732', 'Int32'))
+        for mode, value in [('Um Wert gesunken', '5'), ('Kleiner als', '1370291733'),
+                            ('Groesser als', '1370291731'), ('Nicht gleich', '1370291737')]:
+            found = memory.refine_hits(self.mem, previous, mode, memory.patterns_for(value, ['Int32']), threading.Event())
+            self.assertIn(hit.key, found, mode)
+            self.assertEqual(found[hit.key].initial, raw)
+        with self.assertRaises(ValueError):
+            memory.refine_hits(self.mem, previous, 'Zwischen', memory.patterns_for('10', ['Int32']),
+                               threading.Event(), upper=memory.patterns_for('5', ['Int32']))
+
     def test_gui_pagination_type_filter_and_action_states(self):
         import tkinter as tk
         original = tk.Tk

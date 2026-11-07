@@ -5,6 +5,7 @@ import argparse
 import ctypes
 from dataclasses import dataclass
 import os
+import math
 from pathlib import Path
 import queue
 import struct
@@ -19,7 +20,9 @@ TYPES = {'Int8': '<b', 'UInt8': '<B', 'Int16': '<h', 'UInt16': '<H',
          'Int32': '<i', 'UInt32': '<I', 'Int64': '<q', 'UInt64': '<Q',
          'Float32': '<f', 'Float64': '<d', 'Bool': '<?'}
 AUTO = 'Automatisch'
-MODES = ('Gleich', 'Geaendert', 'Unveraendert', 'Gestiegen', 'Gesunken')
+MODES = ('Gleich', 'Nicht gleich', 'Geaendert', 'Unveraendert', 'Gestiegen', 'Gesunken',
+         'Groesser als', 'Kleiner als', 'Zwischen', 'Um Wert gestiegen', 'Um Wert gesunken')
+VALUE_MODES = {'Gleich', 'Nicht gleich', 'Groesser als', 'Kleiner als', 'Zwischen', 'Um Wert gestiegen', 'Um Wert gesunken'}
 
 
 def pack_value(text, kind):
@@ -148,9 +151,11 @@ class ProcessMemory:
 
 
 def scan_types(memory, patterns, max_bytes, cancel, progress=lambda n: None,
-               regions=None, max_hits=100000, aligned=True, include_shared=False):
+               regions=None, max_hits=100000, aligned=True, include_shared=False, float_tolerance=0.0):
     if not patterns or max_bytes < 0 or max_hits < len(patterns):
         raise ValueError('Ungueltige Suchparameter.')
+    if not math.isfinite(float_tolerance) or float_tolerance < 0:
+        raise ValueError('Float-Toleranz muss endlich und mindestens 0 sein.')
     regions = list(memory.regions() if regions is None else regions)
     regions = [r for r in regions if r.permissions[:2] == 'rw' and
                (include_shared or r.permissions.endswith('p')) and (not r.name.startswith('/dev/') or r.name.startswith('/dev/shm/'))]
@@ -158,9 +163,15 @@ def scan_types(memory, patterns, max_bytes, cancel, progress=lambda n: None,
     budget = max_bytes or eligible
     quota = max_hits // len(patterns)
     counts = {kind: 0 for kind in patterns}
-    grouped = {}
+    grouped = {}; approximate = {}
     for kind, pattern in patterns.items():
-        grouped.setdefault(pattern, []).append(kind)
+        if float_tolerance and kind.startswith('Float'):
+            target = unpack_value(pattern, kind)
+            if not math.isfinite(target):
+                raise ValueError('Float-Suchwert muss bei Toleranz endlich sein.')
+            approximate[kind] = target
+        else:
+            grouped.setdefault(pattern, []).append(kind)
     hits = {}; capped = set(); scanned = skipped = 0
     tail_size = max(map(len, patterns.values())) - 1
     for region in regions:
@@ -201,6 +212,24 @@ def scan_types(memory, patterns, max_bytes, cancel, progress=lambda n: None,
                     if all(kind in capped for kind in active):
                         break
                     offset = block.find(pattern, offset + 1)
+            for kind, target in approximate.items():
+                if kind in capped:
+                    continue
+                size = struct.calcsize(TYPES[kind]); decoder = struct.Struct(TYPES[kind])
+                step = size if aligned else 1
+                start = (-base) % size if aligned else 0
+                for offset in range(start, len(block)-size+1, step):
+                    if offset % 4096 < step and cancel.is_set():
+                        return ScanResult(hits, scanned, skipped, capped, cancelled=True)
+                    if base+offset+size <= address:
+                        continue
+                    number = decoder.unpack_from(block, offset)[0]
+                    if math.isfinite(number) and abs(number-target) <= float_tolerance:
+                        raw = block[offset:offset+size]
+                        hit = Hit(base+offset, kind, raw, raw)
+                        hits[hit.key] = hit; counts[kind] += 1
+                        if counts[kind] >= quota:
+                            capped.add(kind); break
             tail = block[-tail_size:] if tail_size and len(data) == count else b''
             skipped += count - len(data)
             scanned += count; address += count
@@ -239,26 +268,48 @@ def sampled_hits(memory, hits, cancel):
             yield key,None
 
 
-def refine_hits(memory, previous, mode, patterns, cancel):
+def refine_hits(memory, previous, mode, patterns, cancel, upper=None, float_tolerance=0.0):
     if mode not in MODES:
         raise ValueError('Unbekannter Vergleich.')
+    if not math.isfinite(float_tolerance) or float_tolerance < 0:
+        raise ValueError('Float-Toleranz muss endlich und mindestens 0 sein.')
+    if mode == 'Zwischen':
+        if not upper or not patterns or any(kind not in upper or
+                unpack_value(pattern, kind) > unpack_value(upper[kind], kind)
+                for kind, pattern in patterns.items()):
+            raise ValueError('Gültige Unter- und Obergrenze erforderlich.')
     result = {}
-    for key, current in sampled_hits(memory,previous,cancel):
+    for key, current in sampled_hits(memory, previous, cancel):
         if current is None:
             continue
-        hit = previous[key]
-        if mode == 'Gleich':
-            keep = current == patterns.get(hit.kind)
-        elif mode == 'Geaendert':
-            keep = current != hit.baseline
-        elif mode == 'Unveraendert':
-            keep = current == hit.baseline
+        hit = previous[key]; kind = hit.kind
+        if mode in VALUE_MODES and kind not in patterns:
+            continue
+        tolerance = float_tolerance if kind.startswith('Float') else 0
+        number = unpack_value(current, kind)
+        baseline = unpack_value(hit.baseline, kind)
+        target = unpack_value(patterns[kind], kind) if mode in VALUE_MODES and kind in patterns else None
+        if mode in ('Gleich', 'Nicht gleich'):
+            same = (math.isfinite(number) and math.isfinite(target) and abs(number-target) <= tolerance) if tolerance else current == patterns[kind]
+            keep = same if mode == 'Gleich' else not same
+        elif mode in ('Geaendert', 'Unveraendert'):
+            same = (math.isfinite(number) and math.isfinite(baseline) and abs(number-baseline) <= tolerance) if tolerance else current == hit.baseline
+            keep = same if mode == 'Unveraendert' else not same
         elif mode == 'Gestiegen':
-            keep = unpack_value(current, hit.kind) > unpack_value(hit.baseline, hit.kind)
+            keep = number > baseline + tolerance
+        elif mode == 'Gesunken':
+            keep = number < baseline - tolerance
+        elif mode == 'Groesser als':
+            keep = number > target + tolerance
+        elif mode == 'Kleiner als':
+            keep = number < target - tolerance
+        elif mode == 'Zwischen':
+            keep = target-tolerance <= number <= unpack_value(upper[kind], kind)+tolerance
         else:
-            keep = unpack_value(current, hit.kind) < unpack_value(hit.baseline, hit.kind)
+            delta = target if mode == 'Um Wert gestiegen' else -target
+            keep = math.isfinite(number) and math.isfinite(baseline) and abs((number-baseline)-delta) <= tolerance
         if keep:
-            result[key] = Hit(hit.address,hit.kind,current,hit.initial)
+            result[key] = Hit(hit.address, kind, current, hit.initial)
     return result
 
 
@@ -460,6 +511,7 @@ def gui(initial_pid=None):
     kind = tk.StringVar(value=AUTO); mode = tk.StringVar(value='Gleich')
     value = tk.StringVar(value='100'); limit = tk.StringVar(value='0'); new_value = tk.StringVar(value='100')
     per_type_limit = tk.StringVar(value='100000')
+    tolerance_text = tk.StringVar(value='0'); upper_text = tk.StringVar(value='1000')
     aligned = tk.BooleanVar(value=True); shared = tk.BooleanVar(value=False)
     type_filter = tk.StringVar(value='Alle Typen'); page_text = tk.StringVar(); selection_text = tk.StringVar(value='Treffer auswählen, um einen Wert zu bearbeiten.')
     live_enabled = tk.BooleanVar(value=True)
@@ -470,6 +522,9 @@ def gui(initial_pid=None):
     ttk.Label(controls, text='02  Suche', style='Section.TLabel').grid(row=0, column=0, sticky='w', pady=(0, 16))
     ttk.Label(controls, text='Suchwert').grid(row=1, column=0, sticky='w')
     search_entry = ttk.Entry(controls, textvariable=value, width=24, name='search_value'); search_entry.grid(row=2, column=0, sticky='ew', pady=(5, 12))
+    range_panel = ttk.Frame(controls, style='Card.TFrame'); range_panel.grid(row=8, column=0, sticky='ew', pady=(10, 0))
+    ttk.Label(range_panel, text='Obergrenze', style='Muted.TLabel').pack(anchor='w')
+    upper_entry = ttk.Entry(range_panel, textvariable=upper_text, width=22); upper_entry.pack(fill='x', pady=(5, 0))
     ttk.Label(controls, text='Datentyp · nur für die Erstsuche').grid(row=3, column=0, sticky='w')
     kind_box = ttk.Combobox(controls, textvariable=kind, values=[AUTO, *TYPES], state='readonly', width=22)
     kind_box.grid(row=4, column=0, sticky='ew', pady=(5, 12))
@@ -483,7 +538,8 @@ def gui(initial_pid=None):
     def show_options():
         options.deiconify(); options.lift()
     ttk.Button(controls, text='Suchoptionen …', command=show_options).grid(row=9, column=0, sticky='ew', pady=(16, 0))
-    ttk.Label(controls, text='Live zeigt den aktuellen Wert.\nLetzte Suche bleibt der Vergleich\nfür die nächste Folgesuche.', style='Muted.TLabel', justify='left').grid(row=10, column=0, sticky='w', pady=(18, 0))
+    search_hint = ttk.Label(controls, text='Live zeigt den aktuellen Wert.\nLetzte Suche bleibt der Vergleich\nfür die nächste Folgesuche.', style='Muted.TLabel', justify='left')
+    search_hint.grid(row=10, column=0, sticky='w', pady=(18, 0))
     advanced = ttk.Frame(options, style='Card.TFrame', padding=20); advanced.pack(fill='both', expand=True); advanced.columnconfigure(0, weight=1)
     ttk.Label(advanced, text='Suchbereich', style='Section.TLabel').grid(row=0, column=0, sticky='w', pady=(0, 8))
     ttk.Label(advanced, text='Limit in MiB · 0 = gesamter Bereich', style='Muted.TLabel').grid(row=1, column=0, sticky='w')
@@ -492,6 +548,9 @@ def gui(initial_pid=None):
     ttk.Entry(advanced, textvariable=per_type_limit, width=12).grid(row=4, column=0, sticky='ew', pady=(5, 8))
     ttk.Checkbutton(advanced, text='Ausgerichtete Adressen', variable=aligned).grid(row=5, column=0, sticky='w')
     ttk.Checkbutton(advanced, text='Gemeinsamen RAM einschließen', variable=shared).grid(row=6, column=0, sticky='w')
+    ttk.Label(advanced, text='Float-Toleranz (absolut, 0 = exakt)').grid(row=8, column=0, sticky='w', pady=(12, 0))
+    ttk.Entry(advanced, textvariable=tolerance_text).grid(row=9, column=0, sticky='ew', pady=(5, 0))
+    ttk.Label(advanced, text='Toleranz in der Erstsuche ist langsamer.\nSie gilt nur für Float32 / Float64.', style='Muted.TLabel').grid(row=10, column=0, sticky='w', pady=(8, 0))
     ttk.Label(advanced, text='Automatisch prüft alle 11 Typen.\nGleiche Bytes können mehrere\nInterpretationen ergeben.', style='Muted.TLabel', justify='left').grid(row=7, column=0, sticky='w', pady=(12, 0))
     content = ttk.Frame(body, style='Card.TFrame', padding=14); content.grid(row=0, column=1, sticky='nsew')
     content.columnconfigure(0, weight=1); content.rowconfigure(1, weight=1)
@@ -589,7 +648,13 @@ def gui(initial_pid=None):
             messagebox.showerror('Kein Prozess','Zuerst einen Prozess auswaehlen.'); return
         try:
             kinds = list(TYPES) if first and kind.get() == AUTO else [kind.get()] if first else set(h.kind for h in results.values())
-            patterns = patterns_for(value.get(), kinds) if first or mode.get() == 'Gleich' else {}
+            patterns = patterns_for(value.get(), kinds) if first or mode.get() in VALUE_MODES else {}
+            upper_patterns = patterns_for(upper_text.get(), kinds) if not first and mode.get() == 'Zwischen' else None
+            tolerance = float(tolerance_text.get().replace(',', '.'))
+            if not math.isfinite(tolerance) or tolerance < 0:
+                raise ValueError('Float-Toleranz muss endlich und mindestens 0 sein.')
+            if upper_patterns is not None and any(kind not in upper_patterns or unpack_value(data, kind) > unpack_value(upper_patterns[kind], kind) for kind, data in patterns.items()):
+                raise ValueError('Obergrenze muss mindestens der Untergrenze entsprechen.')
             max_bytes = int(limit.get()) * 1024**2
             hit_budget = int(per_type_limit.get())
             if not 100 <= hit_budget <= 1000000:
@@ -618,7 +683,7 @@ def gui(initial_pid=None):
                 if first:
                     outcome = scan_types(target,patterns,max_bytes,cancel,
                         report_progress,
-                        aligned=use_alignment,include_shared=use_shared,max_hits=hit_budget*len(patterns))
+                        aligned=use_alignment,include_shared=use_shared,max_hits=hit_budget*len(patterns),float_tolerance=tolerance)
                     matches = outcome.hits
                     note = f'{len(matches)} typisierte Treffer; {outcome.scanned//1024**2} MiB geprueft; {outcome.skipped//1024} KiB uebersprungen.'
                     if outcome.capped_types:
@@ -626,7 +691,7 @@ def gui(initial_pid=None):
                     if outcome.budget_limited:
                         note += ' Speicherlimit erreicht.'
                 else:
-                    matches = refine_hits(target,previous,chosen_mode,patterns,cancel)
+                    matches = refine_hits(target,previous,chosen_mode,patterns,cancel,upper=upper_patterns,float_tolerance=tolerance)
                     note = f'{len(matches)} Treffer nach Folgesuche.'
                 if cancel.is_set():
                     note += ' Abgebrochen; Teilergebnisse.'
@@ -704,7 +769,12 @@ def gui(initial_pid=None):
         refine_button.configure(state='normal' if results and not busy else 'disabled')
         stop_button.configure(state='normal' if busy else 'disabled')
         mode_box.configure(state='readonly' if results and not busy else 'disabled')
+        if mode.get() == 'Zwischen' and results:
+            range_panel.grid(); search_hint.grid_remove()
+        else:
+            range_panel.grid_remove(); search_hint.grid()
         kind_box.configure(state='disabled' if busy else 'readonly')
+        upper_entry.configure(state='disabled' if busy else 'normal')
         keys = selected_keys()
         for widget in (write_entry, write_button, freeze_button):
             widget.configure(state='normal' if keys and not busy else 'disabled')
@@ -737,8 +807,10 @@ def gui(initial_pid=None):
     # Semantic handles also allow UI tests without depending on the layout.
     root.memory_widgets = dict(tree=tree, search=search_entry, write=write_entry, first=first_button,
                                refine=refine_button, freeze=freeze_button, release=release_button,
-                               filter=filter_box, next=next_button, previous=prev_button, live=live_enabled)
+                               filter=filter_box, next=next_button, previous=prev_button, live=live_enabled,
+                               mode=mode_box, upper=upper_entry, tolerance=tolerance_text)
     process_box.bind('<<ComboboxSelected>>',lambda event:choose_process())
+    mode_box.bind('<<ComboboxSelected>>', lambda event:sync_controls())
     filter_box.bind('<<ComboboxSelected>>', lambda event:change_page())
     tree.bind('<<TreeviewSelect>>',selection_changed)
     tree.bind('<Control-c>', copy_address)

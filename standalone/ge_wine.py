@@ -18,11 +18,12 @@ import threading
 from urllib.request import urlopen
 
 from ge_wine_sessions import Session, LaunchCancelled, stop_all
+from ge_wine_logging import RunLog
 from ge_wine_desktop import (windows_links, installer, installed_shortcuts,
                              program_shortcut, write_shortcut)
 
 
-VERSION = "0.9.0"
+VERSION = "0.10.0"
 PINNED_PROTON = "GE-Proton11-11-x86_64"
 PROTON_URL = ("https://github.com/GloriousEggroll/proton-ge-custom/releases/download/"
               "GE-Proton11-11/GE-Proton11-11-x86_64.tar.gz")
@@ -217,11 +218,6 @@ def prepare(executable, arguments, prefix=None, proton=None, gameid="umu-default
         environment["DXVK_CONFIG"] = f"{previous}; {settings}" if previous else settings
     if diagnostics:
         environment["DXVK_HUD"] = "devinfo,api,fps,frametimes,compiler"
-        environment["DXVK_LOG_PATH"] = str(prefix.parent / (prefix.name + "-logs"))
-        # Proton otherwise defaults DXVK_LOG_LEVEL to 'none', even with a log path.
-        environment["DXVK_LOG_LEVEL"] = "info"
-        environment["PROTON_LOG"] = "1"
-        environment["PROTON_LOG_DIR"] = environment["DXVK_LOG_PATH"]
     bundled = Path(__file__).resolve().parent / "backend" / "umu"
     if bundled.is_dir():
         # Invoke a private backend without changing the user's umu-run or wine commands.
@@ -243,7 +239,7 @@ def report_shortcut(action, report):
         report(f"Desktop-Verknüpfung konnte nicht erstellt werden: {error}\n")
 
 
-def application_run(options, command, environment, directory, session, report, output=None):
+def _application_run(options, command, environment, directory, session, report, output=None):
     profile = selected_profile(options.executable, options.profile)
     before = windows_links(environment["WINEPREFIX"])
     ensure_proton(environment, report, session.cancelled)
@@ -264,12 +260,31 @@ def application_run(options, command, environment, directory, session, report, o
     return result
 
 
+def application_run(options, command, environment, directory, session, report, output=None):
+    recording = RunLog(environment, command, directory, selected_profile(options.executable, options.profile),
+                       session.token, getattr(options, 'full_trace', False))
+    session.log = recording
+    def logged_report(text):
+        recording.console('ge-wine', text)
+        report(text)
+    result = None; failure = None
+    try:
+        logged_report(f"Aufzeichnung: {recording.path}\n")
+        recording.start()
+        result = _application_run(options, command, environment, directory, session, logged_report, output)
+        return result
+    except BaseException as error:
+        failure = type(error).__name__ + ': ' + str(error)
+        raise
+    finally:
+        session.log = None
+        recording.close(result, failure)
+
+
 def launch_cli(options):
     command, environment, directory = prepare(
         options.executable, options.arguments, options.prefix, options.proton, options.gameid,
         options.profile, options.diagnostics, options.nvidia_offload, options.low_latency)
-    if options.diagnostics:
-        Path(environment["DXVK_LOG_PATH"]).mkdir(parents=True, exist_ok=True)
     report = lambda text: print(text, end="", file=sys.stderr, flush=True)
     if options.create_shortcut:
         program_shortcut(options, environment, options.executable,
@@ -309,6 +324,7 @@ def gui(options):
     gameid = tk.StringVar(value=options.gameid)
     profile = tk.StringVar(value=PROFILES[options.profile])
     diagnostics = tk.BooleanVar(value=options.diagnostics)
+    full_trace = tk.BooleanVar(value=getattr(options, 'full_trace', False))
     nvidia_offload = tk.BooleanVar(value=options.nvidia_offload)
     low_latency = tk.BooleanVar(value=options.low_latency)
     prerequisites = tk.BooleanVar(value=not options.no_prerequisites)
@@ -345,7 +361,8 @@ def gui(options):
         row=5, column=1, columnspan=2, sticky="ew", padx=(0, 12))
     settings = ttk.Frame(root)
     settings.grid(row=6, column=0, columnspan=3, sticky="w", padx=12, pady=8)
-    ttk.Checkbutton(settings, text="Diagnose: GPU/FPS und Proton-/DXVK-Logdateien", variable=diagnostics).pack(anchor="w")
+    ttk.Checkbutton(settings, text="API-Aufrufe aufzeichnen (sehr langsam / große Logs)", variable=full_trace).pack(anchor="w")
+    ttk.Checkbutton(settings, text="Diagnose-HUD: GPU/FPS (Dateilogs immer aktiv)", variable=diagnostics).pack(anchor="w")
     ttk.Checkbutton(settings, text="NVIDIA-GPU erzwingen (Hybrid-Laptop)", variable=nvidia_offload).pack(anchor="w")
     ttk.Checkbutton(settings, text="Kürzere Render-Warteschlange (experimentell)", variable=low_latency).pack(anchor="w")
     ttk.Checkbutton(settings, text="Icarus: VC++ und Shader-Compiler automatisch einrichten", variable=prerequisites).pack(anchor="w")
@@ -386,7 +403,7 @@ def gui(options):
             prefix=prefix.get(), proton=(None if not options.proton and proton.get() == suggested_proton[0]
                                        else proton.get()), gameid=gameid.get().strip() or "umu-default",
             profile=next(key for key, value in PROFILES.items() if value == profile.get()),
-            diagnostics=diagnostics.get(), nvidia_offload=nvidia_offload.get(),
+            diagnostics=diagnostics.get(), full_trace=full_trace.get(), nvidia_offload=nvidia_offload.get(),
             low_latency=low_latency.get(), no_prerequisites=not prerequisites.get())
 
     def worker(command, environment, directory, launch_options):
@@ -423,8 +440,6 @@ def gui(options):
                 proton.get(), gameid.get().strip() or "umu-default",
                 next(key for key, value in PROFILES.items() if value == profile.get()),
                 diagnostics.get(), nvidia_offload.get(), low_latency.get())
-            if diagnostics.get():
-                Path(environment["DXVK_LOG_PATH"]).mkdir(parents=True, exist_ok=True)
         except (ValueError, OSError) as error:
             messagebox.showerror("Start nicht möglich", str(error))
             return
@@ -438,8 +453,6 @@ def gui(options):
         log(f"Profil: {PROFILES[selected_profile(executable.get(), profile_key)]}\n")
         if environment.get("DXVK_CONFIG"):
             log(f"DXVK_CONFIG: {environment['DXVK_CONFIG']}\n")
-        if diagnostics.get():
-            log(f"Proton-/DXVK-Protokolle: {environment['DXVK_LOG_PATH']}\n")
         status.set("Wird gestartet. Der erste Download kann mehrere Minuten dauern.")
         threading.Thread(target=worker, args=(command, environment, directory, launch_options), daemon=True).start()
 
@@ -499,7 +512,8 @@ def main(argv=None):
     parser.add_argument("--gameid", default=os.environ.get("GAMEID", "umu-default"))
     parser.add_argument("--profile", choices=PROFILES, default="auto")
     parser.add_argument("--no-prerequisites", action="store_true", help="Automatische Icarus-Laufzeit- und Shader-Compiler-Einrichtung überspringen")
-    parser.add_argument("--diagnostics", action="store_true", help="DXVK-HUD sowie Proton- und DXVK-Dateilogs aktivieren")
+    parser.add_argument("--full-trace", action="store_true", help="Zusätzlich Wine-Relay/Snoop-API-Aufrufe protokollieren (sehr langsam, große Dateien)")
+    parser.add_argument("--diagnostics", action="store_true", help="DXVK-HUD aktivieren; Dateilogs werden immer automatisch erstellt")
     parser.add_argument("--nvidia-offload", action="store_true", help="NVIDIA-GPU auf Hybrid-Systemen wählen")
     parser.add_argument("--low-latency", action="store_true", help="Experimentell: maximal ein Frame in der Warteschlange")
     parser.add_argument("executable", nargs="?")

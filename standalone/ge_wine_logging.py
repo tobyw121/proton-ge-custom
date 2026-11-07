@@ -1,0 +1,148 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""Private, per-launch logs. Sampling complements Wine's process trace."""
+from datetime import datetime
+import json
+import os
+from pathlib import Path
+import threading
+import tempfile
+
+from ge_wine_sessions import TAG, identity
+
+
+def timestamp():
+    return datetime.now().astimezone().isoformat(timespec='microseconds')
+
+
+class RunLog:
+    def __init__(self, environment, command, directory, profile, token, full_trace=False):
+        prefix = Path(environment['WINEPREFIX'])
+        prefix.mkdir(parents=True, exist_ok=True)
+        base = prefix / 'logs'
+        base.mkdir(exist_ok=True, mode=0o700)
+        self.path = base / (datetime.now().strftime('%Y-%m-%d_%H-%M-%S_%f') + '_' + token[:8])
+        self.path.mkdir(mode=0o700)
+        self.lock = threading.RLock()
+        self.streams = {}
+        for name in ('events.jsonl', 'console.log'):
+            fd = os.open(self.path / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            self.streams[name] = os.fdopen(fd, 'w', encoding='utf-8', buffering=1)
+        self.token = token
+        self.prefixes = {str(prefix), str(prefix / 'pfx')}
+        self.done = threading.Event()
+        self.known = {}
+        self.thread = None
+        self.invocation_number = 0
+        channels = '+timestamp,+pid,+tid,+process,+thread,+loaddll,+module,+seh'
+        if full_trace:
+            channels += ',+relay,+snoop'
+        previous = environment.get('WINEDEBUG', '').strip(',')
+        environment.update(PROTON_LOG='1', PROTON_LOG_DIR=str(self.path),
+                           DXVK_LOG_PATH=str(self.path), DXVK_LOG_LEVEL='info', UMU_LOG='debug',
+                           WINEDEBUG=','.join(part for part in (previous, channels) if part))
+        self.metadata = dict(schema=1, started=timestamp(), session=token, prefix=str(prefix),
+                             profile=profile, command=command, cwd=directory, full_trace=full_trace,
+                             environment={key: value for key, value in environment.items()
+                                          if key in {'WINEPREFIX', 'PROTONPATH', 'GAMEID', 'STORE', 'WINEDEBUG',
+                                                     'PROTON_LOG', 'PROTON_LOG_DIR', 'DXVK_CONFIG', 'DXVK_HUD',
+                                                     'DXVK_LOG_PATH', 'DXVK_LOG_LEVEL', 'UMU_LOG'}},
+                             backend_log_layout='calls/NNNN/',
+                             coverage='stdout/stderr, direct launches, Wine debug channels; Linux process sampling every 250 ms; no kernel syscall trace')
+        self._metadata()
+        self.event('recording_start', profile=profile)
+
+    def _metadata(self):
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(mode='w', dir=self.path, encoding='utf-8', delete=False) as output:
+                temporary = Path(output.name)
+                json.dump(self.metadata, output, ensure_ascii=False, indent=2)
+            os.replace(temporary, self.path / 'session.json')
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+
+    def event(self, event, **fields):
+        with self.lock:
+            self.streams['events.jsonl'].write(json.dumps(dict(time=timestamp(), event=event, **fields), ensure_ascii=False) + '\n')
+
+    def console(self, source, text):
+        with self.lock:
+            self.streams['console.log'].write(f'[{timestamp()}] [{source}] {text}' + ('' if text.endswith('\n') else '\n'))
+
+    def invocation(self, environment):
+        with self.lock:
+            self.invocation_number += 1
+            parent = self.path / 'calls'
+            parent.mkdir(exist_ok=True, mode=0o700)
+            directory = parent / f'{self.invocation_number:04d}'
+            directory.mkdir(mode=0o700)
+            environment.update(PROTON_LOG_DIR=str(directory), DXVK_LOG_PATH=str(directory))
+            return str(directory)
+
+    def snapshot(self):
+        current = {}
+        for path in Path('/proc').iterdir():
+            if not path.name.isdigit():
+                continue
+            pid = int(path.name)
+            stamp = identity(pid)
+            if stamp is None:
+                continue
+            try:
+                # Do not persist the rest of the environment (credentials, cookies, etc.).
+                entries = (path / 'environ').read_bytes().split(b'\0')
+                tagged = (TAG + '=' + self.token).encode() in entries
+                in_prefix = any(('WINEPREFIX=' + prefix).encode() in entries for prefix in self.prefixes)
+                if not (tagged or in_prefix):
+                    continue
+                stat = (path / 'stat').read_text().rsplit(') ', 1)[1].split()
+                command = [part.decode('utf-8', 'replace') for part in (path / 'cmdline').read_bytes().split(b'\0') if part]
+                name = (path / 'comm').read_text().strip()
+                try:
+                    executable = os.readlink(path / 'exe')
+                except OSError:
+                    executable = None
+                if identity(pid) != stamp:
+                    continue
+                key = (pid, stamp)
+                current[key] = dict(pid=pid, start_ticks=stamp, parent=int(stat[1]), name=name,
+                                    command=command, executable=executable,
+                                    association='session' if tagged else 'shared-prefix')
+            except (OSError, ValueError, IndexError):
+                continue
+        for key, row in current.items():
+            if key not in self.known:
+                self.event('process_observed', **row)
+            elif row != self.known[key]:
+                self.event('process_changed', **row)
+        for key, row in self.known.items():
+            if key not in current:
+                self.event('process_no_longer_observed', pid=row['pid'], start_ticks=row['start_ticks'])
+        self.known = current
+
+    def start(self):
+        self.snapshot()
+        def monitor():
+            while not self.done.wait(.25):
+                try:
+                    self.snapshot()
+                except OSError as error:
+                    self.event('monitor_error', error=str(error))
+        self.thread = threading.Thread(target=monitor, daemon=True)
+        self.thread.start()
+
+    def close(self, result=None, error=None):
+        self.done.set()
+        if self.thread:
+            self.thread.join()
+        try:
+            self.snapshot()
+            self.metadata.update(ended=timestamp(), exit_code=result, error=error,
+                                 still_observed=list(self.known.values()))
+            self._metadata()
+            self.event('recording_end', exit_code=result, error=error,
+                       still_observed=[row['pid'] for row in self.known.values()])
+        finally:
+            for output in self.streams.values():
+                output.close()

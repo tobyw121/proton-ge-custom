@@ -6,6 +6,7 @@ from pathlib import Path
 import signal
 import subprocess
 import tempfile
+import sys
 import threading
 import uuid
 
@@ -105,6 +106,7 @@ class Session:
         self.cancelled = threading.Event()
         self.lock = threading.RLock()
         self.children = {}
+        self.log = None
         self._save()
 
     def _save(self):
@@ -129,22 +131,57 @@ class Session:
         with self.lock:
             self.check()
             env = dict(environment, **{TAG: self.token})
+            if self.log:
+                log_directory = self.log.invocation(env)
+                self.log.event('launch_requested', command=command, cwd=str(directory), backend_log_dir=log_directory)
+            capture = bool(output or self.log)
             process = subprocess.Popen(command, env=env, cwd=directory, start_new_session=True,
-                                       stdout=subprocess.PIPE if output else None,
-                                       stderr=subprocess.STDOUT if output else None,
+                                       stdout=subprocess.PIPE if capture else None,
+                                       stderr=subprocess.PIPE if capture else None,
                                        text=True, errors='replace', bufsize=1)
             stamp = identity(process.pid)
             if stamp is not None:
                 self.children[str(process.pid)] = stamp
             self._save()
+        readers = []; read_errors = []
+        def consume(stream, source, destination):
+            for line in stream:
+                try:
+                    if self.log and not read_errors:
+                        self.log.console(source, line)
+                    if output:
+                        output(line)
+                    else:
+                        destination.write(line); destination.flush()
+                except (OSError, ValueError) as error:
+                    if not read_errors:
+                        read_errors.append(error)
         try:
-            if output:
-                for line in process.stdout:
-                    output(line)
-            return process.wait()
+            if self.log:
+                self.log.event('launch_started', pid=process.pid, start_ticks=stamp, command=command)
+            if capture:
+                for stream, source, destination in ((process.stdout, 'stdout', sys.stdout),
+                                                     (process.stderr, 'stderr', sys.stderr)):
+                    reader = threading.Thread(target=consume, args=(stream, source, destination), daemon=True)
+                    reader.start(); readers.append(reader)
+            result = process.wait()
+            for reader in readers:
+                reader.join()
+            if read_errors:
+                raise OSError('Aufzeichnung/Ausgabe fehlgeschlagen: ' + str(read_errors[0]))
+            if self.log:
+                self.log.event('launch_exited', pid=process.pid, start_ticks=stamp, exit_code=result)
+            return result
+        except BaseException:
+            self.stop()
+            process.wait()
+            for reader in readers:
+                reader.join()
+            raise
         finally:
-            if process.stdout:
-                process.stdout.close()
+            for stream in (process.stdout, process.stderr):
+                if stream:
+                    stream.close()
             with self.lock:
                 self.children.pop(str(process.pid), None)
                 self._save()
