@@ -535,8 +535,11 @@ einer Spielvariable oder ein serverseitiger Wert ableiten.
 1. Die Anwendung neu über `ge-wine --speed-control /pfad/Programm.exe` starten.
    Alternativ in der GE-Wine-GUI „Speedhack-Steuerung für GE-Memory“ aktivieren.
    Der Button „GE-Wine starten/öffnen“ in GE-Memory aktiviert diese Vorbereitung.
-2. In GE-Memory den tatsächlichen Spielprozess auswählen und oben „Speedhack“ öffnen.
-3. Faktor eingeben und „Anwenden“ wählen. Schnellwahl: 0,5× / 1× / 2×; erlaubt sind
+2. In GE-Memory den tatsächlichen Spielprozess auswählen. Die Speedhack-Steuerung
+   steht direkt unter der Prozessauswahl; „Speedhack …“ öffnet zusätzlich die Details.
+3. Faktor eingeben und „Speedhack aktiv“ einschalten oder „Faktor anwenden“ wählen.
+   Ausschalten setzt den Prozess auf 1× zurück und behält den gewählten Faktor für
+   erneutes Aktivieren. Änderungen des Faktors mit „Faktor anwenden“ bestätigen. Schnellwahl: 0,5× / 1× / 2×; erlaubt sind
    0,05× bis 20×. „Zurück auf 1×“ stellt die normale Zeitrate wieder her.
 4. Die Anzeige unterscheidet angeforderte und von der Zeitbibliothek bestätigte
    Faktoren. Eine Bestätigung bedeutet, dass abgefangene Zeitabfragen skaliert werden;

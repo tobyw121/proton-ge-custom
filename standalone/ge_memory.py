@@ -518,7 +518,8 @@ def gui(initial_pid=None):
     type_filter = tk.StringVar(value='Alle Typen'); page_text = tk.StringVar(); selection_text = tk.StringVar(value='Treffer auswählen, um einen Wert zu bearbeiten.')
     live_enabled = tk.BooleanVar(value=True)
     speed_target = None; speed_modified = {}
-    speed_factor = tk.StringVar(value='1'); speed_status = tk.StringVar(value='Zuerst einen Prozess auswählen.')
+    speed_enabled = tk.BooleanVar(value=False)
+    speed_factor = tk.StringVar(value='2'); speed_status = tk.StringVar(value='Zuerst einen Prozess auswählen.')
     speed_title = tk.StringVar(value='Kein Zielprozess')
     body = ttk.Frame(root); body.grid(row=2, column=0, sticky='nsew', padx=20)
     body.columnconfigure(1, weight=1); body.rowconfigure(0, weight=1)
@@ -600,24 +601,27 @@ def gui(initial_pid=None):
     def refresh_speed():
         nonlocal speed_target
         if memory is None:
-            speed_target = None; speed_status.set('Zuerst einen Prozess auswählen.'); speed_title.set('Kein Zielprozess')
+            speed_target = None; speed_enabled.set(False); speed_status.set('Zuerst einen Prozess auswählen.'); speed_title.set('Kein Zielprozess')
         else:
             speed_title.set(f'Zielprozess: PID {memory.pid}')
             try:
                 if speed_target is None or speed_target.pid != memory.pid or speed_target.stamp != memory.stamp:
                     speed_target = SpeedControl(memory.pid)
+                    requested = speed_target.read()['requested']
+                    speed_factor.set(f'{requested:g}' if requested != 1 else '2')
                 info = speed_target.read()
+                speed_enabled.set(info['requested'] != 1)
                 if info['pending']:
                     speed_status.set(f"{info['requested']:g}× angefordert · wartet auf Zeitabfrage.\nZuletzt bestätigt: {info['applied']:g}× · Zeitabfragen: {info['calls']}")
                 else:
-                    speed_status.set(f"Faktor {info['applied']:g}× von der Zeitbibliothek bestätigt.\nZeitabfragen: {info['calls']} · Wirkung im Spiel bitte prüfen.")
+                    speed_status.set(f"{'Aktiv' if info['requested'] != 1 else 'Deaktiviert'} · Faktor {info['applied']:g}× von der Zeitbibliothek bestätigt.\nZeitabfragen: {info['calls']} · Wirkung im Spiel bitte prüfen.")
             except (OSError, ValueError) as error:
-                speed_target = None
+                speed_target = None; speed_enabled.set(False)
                 speed_status.set('Keine erreichbare Zeitbibliothek. Programm neu über GE-Wine mit „Speedhack-Steuerung“ starten.\n' + str(error))
-        for widget in (speed_apply, speed_reset, *speed_presets):
+        for widget in (speed_apply, speed_reset, speed_toggle, speed_inline_toggle, speed_inline_apply, *speed_presets):
             widget.configure(state='normal' if speed_target is not None and not busy else 'disabled')
 
-    def set_speed(reset=False):
+    def set_speed(reset=False, preserve_factor=False):
         try:
             if memory is None:
                 raise ValueError('Zuerst einen Prozess auswählen.')
@@ -625,23 +629,32 @@ def gui(initial_pid=None):
             factor = 1 if reset else validate_factor(speed_factor.get())
             controller.set(factor)
             speed_modified[(controller.pid, controller.stamp)] = controller
-            speed_factor.set(f'{factor:g}')
+            if not preserve_factor:
+                speed_factor.set(f'{factor:g}')
             refresh_speed()
         except (OSError, ValueError) as error:
+            refresh_speed()
             messagebox.showerror('Speedhack', str(error))
+
+    def toggle_speed():
+        set_speed(reset=not speed_enabled.get(), preserve_factor=True)
 
     def show_speed():
         refresh_speed()
         if speed_target is not None:
             try:
-                speed_factor.set(f"{speed_target.read()['requested']:g}")
+                requested = speed_target.read()['requested']
+                if requested != 1:
+                    speed_factor.set(f'{requested:g}')
             except (OSError, ValueError):
                 refresh_speed()
         speed_window.deiconify(); speed_window.lift()
 
+    speed_toggle = ttk.Checkbutton(speed_panel, text='Speedhack aktiv', variable=speed_enabled, command=toggle_speed)
+    speed_toggle.grid(row=8, column=0, columnspan=4, sticky='w', pady=(12, 0))
     speed_apply = ttk.Button(speed_panel, text='Anwenden', command=set_speed, style='Accent.TButton')
     speed_apply.grid(row=3, column=0, columnspan=2, sticky='ew', pady=(12, 0), padx=(0, 8))
-    speed_reset = ttk.Button(speed_panel, text='Zurück auf 1×', command=lambda:set_speed(True))
+    speed_reset = ttk.Button(speed_panel, text='Zurück auf 1×', command=lambda:set_speed(True, preserve_factor=True))
     speed_reset.grid(row=3, column=2, columnspan=2, sticky='ew', pady=(12, 0))
     speed_presets = []
     for index, factor in enumerate((.5, 1, 2)):
@@ -652,6 +665,18 @@ def gui(initial_pid=None):
         speed_presets.append(button)
     ttk.Button(speed_panel, text='GE-Wine starten', command=lambda:launch_ge_wine()).grid(row=7, column=0, columnspan=4, sticky='ew', pady=(16, 0))
     ttk.Button(header, text='Speedhack …', command=show_speed).pack(side='right', padx=(0, 18))
+    speed_inline = ttk.Frame(connection, style='Card.TFrame')
+    speed_inline.grid(row=2, column=0, columnspan=4, sticky='ew', pady=(14, 0))
+    speed_inline_toggle = ttk.Checkbutton(speed_inline, text='Speedhack aktiv', variable=speed_enabled, command=toggle_speed)
+    speed_inline_toggle.pack(side='left', padx=(0, 16))
+    ttk.Label(speed_inline, text='Faktor').pack(side='left', padx=(0, 8))
+    speed_inline_entry = ttk.Entry(speed_inline, textvariable=speed_factor, width=10)
+    speed_inline_entry.pack(side='left')
+    ttk.Label(speed_inline, text='×  (0,05–20)').pack(side='left', padx=8)
+    speed_inline_apply = ttk.Button(speed_inline, text='Faktor anwenden', command=set_speed)
+    speed_inline_apply.pack(side='left', padx=8)
+    speed_inline_entry.bind('<Return>', lambda event:set_speed())
+    ttk.Label(connection, textvariable=speed_status, style='Muted.TLabel', wraplength=1000).grid(row=3, column=0, columnspan=4, sticky='w', pady=(6, 0))
 
     def error_message(error):
         if isinstance(error, PermissionError):
@@ -884,6 +909,8 @@ def gui(initial_pid=None):
                                filter=filter_box, next=next_button, previous=prev_button, live=live_enabled,
                                mode=mode_box, upper=upper_entry, tolerance=tolerance_text,
                                speed_apply=speed_apply, speed_reset=speed_reset, speed_factor=speed_factor,
+                               speed_enabled=speed_enabled, speed_toggle=speed_inline_toggle,
+                               speed_inline=speed_inline, speed_inline_apply=speed_inline_apply,
                                speed_status=speed_status, speed_window=speed_window)
     process_box.bind('<<ComboboxSelected>>',lambda event:choose_process())
     mode_box.bind('<<ComboboxSelected>>', lambda event:sync_controls())
