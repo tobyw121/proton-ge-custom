@@ -13,6 +13,7 @@ import subprocess
 import signal
 import tempfile
 from datetime import datetime
+from collections import deque
 
 from ge_wine_sessions import identity, records_directory
 
@@ -107,6 +108,34 @@ def attached_directory(pid, stamp):
         raise ValueError('Ungültiger Speedhack-Anhängeeintrag.') from error
 
 
+
+def debugger_summary(path):
+    """Keep the complete log on disk, but never flood a message box with thread notices."""
+    tail=deque(maxlen=3);important=deque(maxlen=4);hooks=None;context=0
+    noise=re.compile(r'^\[(?:New LWP|New Thread|Thread .* exited|LWP .* exited)\b')
+    failure=re.compile(r'error|failed|cannot|could not|couldn.t|not found|no symbol|undefined|permission|ptrace|GLIBC_|GE_SPEED_ERROR',re.I)
+    with Path(path).open(encoding='utf-8',errors='replace') as output:
+        for raw in output:
+            line=raw.strip()
+            match=re.search(r'GE_SPEED_HOOKS=(-?\d+)',line)
+            if match:hooks=int(match[1])
+            if not line or noise.match(line):continue
+            # Keep contextual lines after a debugger error (its explanation often follows).
+            if failure.search(line):context=2
+            if context:
+                important.append(line[:180]);context-=1
+            tail.append(line[:180])
+    return hooks,'\n'.join(important or tail)[:750]
+
+
+def debugger_failure(hooks):
+    if hooks==0:return 'Keine unterstützten clock_gettime-Importe in den geladenen Modulen gefunden.'
+    if hooks==-1:return 'Zeitimporte konnten nicht vollständig angepasst oder Seitenschutzrechte nicht wiederhergestellt werden.'
+    if hooks==-2:return 'Die Bibliothek unterstützt diese Prozessarchitektur nicht.'
+    if hooks==-3:return 'Der private Speedhack-Steuerordner konnte im Zielprozess nicht eingerichtet werden.'
+    if hooks==-4:return 'Im Zielprozess ist bereits eine Zeitbibliothek eingerichtet; erneutes Laden wurde abgelehnt.'
+    return 'Der Debugger hat das Einklinken nicht bestätigt.'
+
 def attach_speed(pid, expected_stamp=None, libraries=None):
     """Explicit debugger attachment to an owned x86-64 ELF process. No privilege bypass."""
     pid=int(pid)
@@ -138,30 +167,43 @@ def attach_speed(pid, expected_stamp=None, libraries=None):
               'set pagination off','set confirm off','set auto-load off','set debuginfod enabled off',
               'set unwindonsignal on',
               'set $h=((void*(*)(const char*,int))dlopen)("'+remote_directory+'/libge_speed.so",2)',
-              'if $h == 0','detach','quit 1','end',
+              'if $h == 0','printf "GE_SPEED_ERROR=dlopen fehlgeschlagen\\n"','call (char*)dlerror()','detach','quit 1','end',
               'set $f=((void*(*)(void*,const char*))dlsym)($h,"ge_speed_attach")',
-              'if $f == 0','detach','quit 1','end',
+              'if $f == 0','printf "GE_SPEED_ERROR=dlsym fehlgeschlagen\\n"','call (char*)dlerror()','detach','quit 1','end',
               'set $hooks=((int(*)(const char*))$f)("'+remote_directory+'")',
               'printf "GE_SPEED_HOOKS=%d\\n",$hooks','detach']
     script.write_text('\n'.join(commands)+'\n');script.chmod(0o600)
     try:
         if identity(pid)!=stamp:raise ProcessLookupError('Zielprozess wurde beendet.')
-        process=subprocess.Popen([debugger,'-nx','-nh','-q','-batch','-iex','set auto-load off','-iex','set debuginfod enabled off','-p',str(pid),'-x',str(script)],
-                                 stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,errors='replace')
-        try:
-            output=process.communicate(timeout=20)[0]
-        except subprocess.TimeoutExpired:
-            process.send_signal(signal.SIGINT)
-            try:output=process.communicate(timeout=5)[0]
+        with tempfile.NamedTemporaryFile(mode='w',prefix=f'debugger-{pid}-{stamp}-',suffix='.log',
+                                         dir=attachment_record(pid,stamp).parent,delete=False,encoding='utf-8') as output:
+            log_path=Path(output.name)
+            output.write(f'# GE-Memory attachment pid={pid} start_ticks={stamp} sysroot=/proc/{pid}/root\n')
+            output.flush()
+            process=subprocess.Popen([debugger,'-nx','-nh','-q','-batch',
+                                      '-iex','set auto-load off','-iex','set debuginfod enabled off',
+                                      '-iex','set print thread-events off',
+                                      '-iex',f'set sysroot /proc/{pid}/root',
+                                      '-p',str(pid),'-x',str(script)],stdout=output,stderr=subprocess.STDOUT)
+            timed_out=False
+            try:
+                process.wait(timeout=20)
             except subprocess.TimeoutExpired:
-                process.kill();output=process.communicate()[0]
-            raise ValueError('Einklinken hat das Zeitlimit überschritten. Zielprozess prüfen. '+output[-1500:])
-        match=re.search(r'GE_SPEED_HOOKS=(-?\d+)',output)
-        if process.returncode or match is None or int(match[1])<=0:
-            raise ValueError('Einklinken nicht bestätigt: keine unterstützten Zeitimporte oder Debuggerzugriff verweigert. '+output[-2000:])
+                timed_out=True
+                process.send_signal(signal.SIGINT)
+                try:process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill();process.wait()
+        hooks,details=debugger_summary(log_path)
+        reference=f'Vollständiges Protokoll: {log_path}'
+        if timed_out:
+            raise ValueError('Einklinken hat das Zeitlimit überschritten. Zielprozess prüfen.\n'+details+'\n'+reference)
+        if process.returncode or hooks is None or hooks<=0:
+            reason=debugger_failure(hooks) if hooks is not None and hooks<=0 else 'Der Debugger wurde nach dem Verbinden mit einem Fehler beendet.'
+            raise ValueError(reason+'\n'+details+'\n'+reference)
         controller=SpeedControl(pid,directory=host_directory,expected_stamp=stamp)
         data=dict(pid=pid,start_ticks=stamp,directory=str(host_directory),remote_directory=remote_directory,
-                  hooks=int(match[1]),method='gdb-dlopen-elf-import-rebinding')
+                  hooks=hooks,debugger_log=str(log_path),method='gdb-dlopen-elf-import-rebinding')
         target=attachment_record(pid,stamp)
         with tempfile.NamedTemporaryFile(mode='w',dir=target.parent,delete=False) as out:
             temporary=Path(out.name);json.dump(data,out)

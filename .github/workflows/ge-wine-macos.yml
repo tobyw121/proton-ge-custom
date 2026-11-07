@@ -62,7 +62,7 @@ jobs:
         if: matrix.arch == 'x86_64'
         timeout-minutes: 5
         run: |
-          ditto -x -k dist/macos/ge-wine_0.14.0_macos_x86_64.zip dist/smoke
+          ditto -x -k dist/macos/ge-wine_0.14.1_macos_x86_64.zip dist/smoke
           'dist/smoke/GE-Wine.app/Contents/MacOS/GE-Wine' --setup-runtime > dist/native-wine-path.txt
       - name: Native Windows executable smoke test (Intel)
         if: matrix.arch == 'x86_64'

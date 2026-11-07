@@ -9,7 +9,7 @@ exe = EXE(archive, analysis.scripts, [], exclude_binaries=True, name='GE-Wine', 
           argv_emulation=False, target_arch=None)
 collection = COLLECT(exe,analysis.binaries,analysis.datas,name='GE-Wine',strip=False,upx=False)
 app = BUNDLE(collection,name='GE-Wine.app',bundle_identifier='org.ge-wine.macos',
-             info_plist={'CFBundleShortVersionString':'0.14.0','CFBundleVersion':'0.14.0',
+             info_plist={'CFBundleShortVersionString':'0.14.1','CFBundleVersion':'0.14.1',
                          'LSMinimumSystemVersion':'13.0','NSHighResolutionCapable':True,
                          'CFBundleDisplayName':'GE-Wine',
                          'CFBundleDocumentTypes':[{'CFBundleTypeName':'Windows program','CFBundleTypeRole':'Viewer',

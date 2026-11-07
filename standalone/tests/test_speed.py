@@ -10,7 +10,7 @@ import unittest
 from unittest.mock import patch
 
 import test_launcher
-from ge_speed import SpeedSession, SpeedControl, validate_factor, attach_speed, attachment_record
+from ge_speed import SpeedSession, SpeedControl, validate_factor, attach_speed, attachment_record, debugger_summary, debugger_failure
 from ge_wine_sessions import identity
 
 PROBE = r'''
@@ -291,7 +291,10 @@ class SpeedTests(unittest.TestCase):
             self.measure(process,1)
             with patch.dict(os.environ,XDG_STATE_HOME=str(self.root/'attached-state')):
                 control=attach_speed(process.pid,libraries=self.root)
-                self.assertGreater(json.loads(attachment_record(process.pid,control.stamp).read_text())['hooks'],0)
+                record=json.loads(attachment_record(process.pid,control.stamp).read_text())
+                self.assertGreater(record['hooks'],0)
+                self.assertEqual(Path(record['debugger_log']).stat().st_mode & 0o777,0o600)
+                self.assertEqual(debugger_summary(record['debugger_log'])[0],record['hooks'])
                 control.set(2);self.measure(process,2)
                 # A new controller discovers the attachment without an inherited environment variable.
                 reopened=SpeedControl(process.pid)
@@ -384,6 +387,20 @@ class SpeedTests(unittest.TestCase):
             with self.assertRaises(ProcessLookupError):
                 attach_speed(process.pid,expected_stamp='stale',libraries=self.root)
             debugger.assert_not_called()
+
+    def test_debugger_summary_retains_errors_hidden_by_thread_notifications(self):
+        path=self.root/'debugger-failure.log'
+        error='dlopen failed: version GLIBC_2.38 not found in target runtime'
+        data='[New LWP 1]\n'*5000+error+'\n'+'[New LWP 2]\n'*5000
+        path.write_text(data)
+        hooks,summary=debugger_summary(path)
+        self.assertIsNone(hooks)
+        self.assertIn(error,summary)
+        self.assertNotIn('New LWP',summary)
+        self.assertEqual(path.read_text(),data)
+        self.assertLessEqual(len(summary),750)
+        self.assertNotIn('verweigert',debugger_failure(None))
+        self.assertIn('Importe',debugger_failure(0))
 
     def test_unprepared_process_is_reported_without_injection(self):
         with self.assertRaisesRegex(ValueError,'noch nicht verbunden'):

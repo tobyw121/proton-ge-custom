@@ -545,6 +545,14 @@ Für bereits laufende Programme unter Linux:
 Das Einklinken läuft im Hintergrund über den mitgelieferten Paketbestandteil GDB.
 Es verwendet ausschließlich eigene Prozesse und die normalen Linux-Debuggerrechte.
 Prozess-ID und Startkennung werden vor dem Laden auch im angehaltenen Ziel geprüft.
+GDB liest Zielbibliotheken über `/proc/<PID>/root`, damit Steam-Runtime-
+Bibliotheken nicht mit denen des Hosts verwechselt werden. Thread-Meldungen wie
+`New LWP` sind im Debugger abgeschaltet. Vollständige Diagnoseprotokolle bleiben
+benutzerprivat als `debugger-<PID>-<Startkennung>-*.log` im Verzeichnis
+`$XDG_STATE_HOME/ge-wine/attached-speed/` (Standard `~/.local/state/`).
+Der Fehlerdialog zeigt einen kurzen Auszug mit Fehlerursachen und dem Logpfad,
+keine komplette Thread-Liste. Ladefehler von `dlopen`/`dlsym` werden ausgegeben;
+fehlende Zeitimporte werden nur bei bestätigter Rückgabe 0 so bezeichnet.
 Zugriffsverweigerungen durch Linux/Yama, Container oder andere Schutzmechanismen
 werden angezeigt; GE-Memory ändert keine Schutzregeln und erhöht keine Rechte.
 Das Einklinken kann den Zielprozess kurz unterbrechen und ist experimentell.
