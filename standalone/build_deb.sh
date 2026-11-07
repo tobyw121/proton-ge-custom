@@ -16,7 +16,7 @@ git -C "$build_dir/umu-source" checkout --quiet --detach FETCH_HEAD
 test "$(git -C "$build_dir/umu-source" rev-parse HEAD)" = "$umu_commit"
 stage="$build_dir/package"
 install -Dm644 "$source_dir/ge_wine.py" "$stage/usr/lib/ge-wine/ge_wine.py"
-install -m644 "$source_dir/ge_speed.py" "$source_dir/ge_wine_logging.py" "$source_dir/ge_memory.py" "$source_dir/ge_wine_sessions.py" "$source_dir/ge_wine_desktop.py" "$stage/usr/lib/ge-wine/"
+install -m644 "$source_dir/ge_wine_dedup.py" "$source_dir/ge_speed.py" "$source_dir/ge_wine_logging.py" "$source_dir/ge_memory.py" "$source_dir/ge_wine_sessions.py" "$source_dir/ge_wine_desktop.py" "$stage/usr/lib/ge-wine/"
 bash "$source_dir/build_speed.sh" "$stage/usr/lib/ge-wine/speed"
 mkdir -p "$stage/usr/lib/ge-wine/backend" "$stage/DEBIAN" \
     "$stage/usr/share/doc/ge-wine" "$stage/usr/share/applications"
@@ -94,7 +94,7 @@ StartupNotify=false
 EOF
 cat > "$stage/DEBIAN/control" <<'EOF'
 Package: ge-wine
-Version: 0.11.0
+Version: 0.12.0
 Architecture: amd64
 Maintainer: GE-Wine contributors <ge-wine@example.invalid>
 Section: utils
@@ -107,6 +107,6 @@ EOF
 find "$stage" -type d -exec chmod 755 {} +
 find "$stage" -type f -exec chmod 644 {} +
 chmod 755 "$stage/usr/bin/ge-wine" "$stage/usr/bin/ge-memory"
-dpkg-deb --root-owner-group --build "$stage" "$output_dir/ge-wine_0.11.0_amd64.deb"
-(cd "$output_dir" && sha256sum ge-wine_0.11.0_amd64.deb > ge-wine_0.11.0_amd64.deb.sha256)
-printf 'Package: %s/ge-wine_0.11.0_amd64.deb\n' "$output_dir"
+dpkg-deb --root-owner-group --build "$stage" "$output_dir/ge-wine_0.12.0_amd64.deb"
+(cd "$output_dir" && sha256sum ge-wine_0.12.0_amd64.deb > ge-wine_0.12.0_amd64.deb.sha256)
+printf 'Package: %s/ge-wine_0.12.0_amd64.deb\n' "$output_dir"

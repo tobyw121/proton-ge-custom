@@ -5,6 +5,7 @@
 import argparse
 import fcntl
 import hashlib
+import json
 import os
 from pathlib import Path
 import queue
@@ -19,12 +20,13 @@ from urllib.request import urlopen
 
 from ge_wine_sessions import Session, LaunchCancelled, stop_all
 from ge_wine_logging import RunLog
+from ge_wine_dedup import compact_recording
 from ge_speed import SpeedSession
 from ge_wine_desktop import (windows_links, installer, installed_shortcuts,
                              program_shortcut, write_shortcut)
 
 
-VERSION = "0.11.0"
+VERSION = "0.12.0"
 PINNED_PROTON = "GE-Proton11-11-x86_64"
 PROTON_URL = ("https://github.com/GloriousEggroll/proton-ge-custom/releases/download/"
               "GE-Proton11-11/GE-Proton11-11-x86_64.tar.gz")
@@ -278,8 +280,9 @@ def application_run(options, command, environment, directory, session, report, o
                        session.token, getattr(options, 'full_trace', False))
     session.log = recording
     def logged_report(text):
-        recording.console('ge-wine', text)
-        report(text)
+        visible = recording.console('ge-wine', text)
+        if visible:
+            report(visible)
     result = None; failure = None
     try:
         logged_report(f"Aufzeichnung: {recording.path}\n")
@@ -291,7 +294,10 @@ def application_run(options, command, environment, directory, session, report, o
         raise
     finally:
         session.log = None
-        recording.close(result, failure)
+        summary = recording.close(result, failure)
+        report(f"Log-Kompaktierung: {summary.get('suppressed_lines', 0)} Wiederholungen zusammengefasst.\n")
+        if summary.get('pending'):
+            report('Noch geöffnete Laufzeit-Logs bleiben unverändert; später --compact-logs verwenden.\n')
 
 
 def launch_cli(options):
@@ -488,7 +494,7 @@ def gui(options):
                     status.set("Programm sofort beendet.")
                 elif kind == "error":
                     log(value + "\n")
-                    status.set("Start fehlgeschlagen. Details stehen im Protokoll.")
+                    status.set("Start oder Aufzeichnung fehlgeschlagen. Details stehen im Protokoll.")
                 else:
                     status.set("Programm beendet." if value == 0 else
                                f"Programm oder Laufzeit mit Fehlercode {value} beendet. Siehe Protokoll.")
@@ -518,6 +524,7 @@ def gui(options):
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Windows-Programme mit GE-Proton starten.")
     parser.add_argument("--version", action="version", version=f"GE-Wine {VERSION}")
+    parser.add_argument("--compact-logs", metavar="ORDNER", help="Abgeschlossenen datierten GE-Wine-Logordner von Duplikaten bereinigen")
     parser.add_argument("--kill-all", action="store_true", help="Alle registrierten GE-Wine-Sitzungen und ihre Kindprozesse sofort beenden")
     parser.add_argument("--create-shortcut", action="store_true", help="Desktop-Verknüpfung mit aktuellen Startoptionen erstellen, ohne zu starten")
     parser.add_argument("--gui", action="store_true", help="Grafische Oberfläche öffnen")
@@ -536,6 +543,9 @@ def main(argv=None):
     parser.add_argument("arguments", nargs=argparse.REMAINDER)
     options = parser.parse_args(argv)
     try:
+        if options.compact_logs:
+            print(json.dumps(compact_recording(options.compact_logs), ensure_ascii=False))
+            return 0
         if options.kill_all:
             count = stop_all()
             print(f"GE-Wine: {count} laufende Sitzungen beendet.")

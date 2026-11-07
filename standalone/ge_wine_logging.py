@@ -8,6 +8,7 @@ import threading
 import tempfile
 
 from ge_wine_sessions import TAG, identity
+from ge_wine_dedup import LogIndex, compact_files
 
 
 def timestamp():
@@ -27,6 +28,9 @@ class RunLog:
         for name in ('events.jsonl', 'console.log'):
             fd = os.open(self.path / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             self.streams[name] = os.fdopen(fd, 'w', encoding='utf-8', buffering=1)
+        self.index = LogIndex(self.path)
+        self.lines = {"console.log": 0, "events.jsonl": 0}
+        self.closed = False
         self.token = token
         self.prefixes = {str(prefix), str(prefix / 'pfx')}
         self.done = threading.Event()
@@ -64,11 +68,21 @@ class RunLog:
 
     def event(self, event, **fields):
         with self.lock:
-            self.streams['events.jsonl'].write(json.dumps(dict(time=timestamp(), event=event, **fields), ensure_ascii=False) + '\n')
+            text = json.dumps(dict(time=timestamp(), event=event, **fields), ensure_ascii=False) + '\n'
+            if self.index.record('events.jsonl',text.encode(),self.lines['events.jsonl']+1,structured=True):
+                self.streams['events.jsonl'].write(text)
+                self.lines['events.jsonl'] += 1
 
     def console(self, source, text):
+        visible = []
         with self.lock:
-            self.streams['console.log'].write(f'[{timestamp()}] [{source}] {text}' + ('' if text.endswith('\n') else '\n'))
+            for part in text.splitlines(keepends=True):
+                payload = f'[{source}] {part.rstrip(chr(10)+chr(13))}'
+                if self.index.record('console.log',payload.encode('utf-8'),self.lines['console.log']+1):
+                    self.streams['console.log'].write(f'[{timestamp()}] {payload}\n')
+                    self.lines['console.log'] += 1
+                    visible.append(part)
+        return ''.join(visible)
 
     def invocation(self, environment):
         with self.lock:
@@ -133,16 +147,33 @@ class RunLog:
         self.thread.start()
 
     def close(self, result=None, error=None):
+        if self.closed:
+            return self.metadata.get('deduplication', {})
         self.done.set()
         if self.thread:
             self.thread.join()
         try:
             self.snapshot()
-            self.metadata.update(ended=timestamp(), exit_code=result, error=error,
-                                 still_observed=list(self.known.values()))
-            self._metadata()
             self.event('recording_end', exit_code=result, error=error,
                        still_observed=[row['pid'] for row in self.known.values()])
+            self.metadata.update(ended=timestamp(),exit_code=result,error=error,
+                                 still_observed=list(self.known.values()))
+            self._metadata()
+            for name, output in self.streams.items():
+                output.flush()
+                self.index.checkpoint(name)
+            pending = compact_files(self.index, (self.path/'calls').rglob('*.log'))
+            summary = self.index.export(pending)
+            self.metadata.update(ended=timestamp(), exit_code=result, error=error,
+                                 still_observed=list(self.known.values()), deduplication=summary)
+            self._metadata()
+            return summary
+        except OSError as processing_error:
+            self.metadata['log_processing_error'] = str(processing_error)
+            self._metadata()
+            raise
         finally:
+            self.closed = True
             for output in self.streams.values():
                 output.close()
+            self.index.close()

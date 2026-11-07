@@ -148,7 +148,9 @@ class Session:
             for line in stream:
                 try:
                     if self.log and not read_errors:
-                        self.log.console(source, line)
+                        line = self.log.console(source, line)
+                    if not line:
+                        continue
                     if output:
                         output(line)
                     else:

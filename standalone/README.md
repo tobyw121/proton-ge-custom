@@ -36,8 +36,8 @@ Windows-/GPU-Tests sind darin nicht enthalten.
 ```sh
 bash standalone/build_deb.sh /tmp/ge-wine-dist
 cd /tmp/ge-wine-dist
-sha256sum -c ge-wine_0.11.0_amd64.deb.sha256
-sudo apt install ./ge-wine_0.11.0_amd64.deb
+sha256sum -c ge-wine_0.12.0_amd64.deb.sha256
+sudo apt install ./ge-wine_0.12.0_amd64.deb
 ```
 
 Anschließend im Anwendungsmenü **GE-Wine** öffnen oder:
@@ -590,3 +590,51 @@ Für den Quellbau werden zusätzlich `gcc-multilib` und `libc6-dev-i386` benöti
 Paketbau führt dies automatisch aus. Für Entwicklung ohne installierte Anwendung
 lässt sich `GE_WINE_SPEED_LIBRARY_DIR=/pfad/ausgabe` setzen. Die Bibliotheksquellen
 und das Buildskript liegen auch unter `/usr/share/doc/ge-wine/`.
+
+
+## Duplikatfreie Logs ab 0.12.0
+
+GE-Wine behält pro Datei nur das erste Auftreten einer Meldung, auch wenn sie
+zwischen anderen Meldungen immer wieder auftaucht. Für den Vergleich werden
+ANSI-Farbcodes und bekannte vorangestellte Zeitstempel ignoriert (Wine-Laufzeit
+und ISO-Zeitstempel in eckigen Klammern). PID, Thread-ID, Adressen, Fehlercodes,
+Parameter, Leerzeichen und unterschiedliche Ausgabekanäle bleiben unterscheidbar.
+Die erste Originalzeile bleibt erhalten. Bei strukturierten GE-Wine-Ereignissen
+wird nur das äußere `time`-Feld beim Vergleich ignoriert.
+
+- `console.log` und `events.jsonl` werden bereits während der Aufzeichnung
+  dedupliziert. Auch GUI und Terminal zeigen dieselbe Konsolenmeldung nur einmal.
+- Proton-/DXVK-Dateien unter `calls/` werden beim Abschluss atomar kompaktiert.
+  Noch offene Schreibzugriffe werden soweit über `/proc` erkennbar berücksichtigt;
+  betroffene Dateien bleiben unverändert und stehen in `deduplication.pending`.
+  Während des Spielbetriebs können externe Rohlogs deshalb zunächst weiter wachsen.
+- `repetitions.jsonl` enthält beim Abschluss je wiederholter Meldung genau einen
+  Eintrag mit Quelldatei, Zeilennummer im kompakten Log, Gesamtanzahl sowie erstem
+  und letztem Auftreten. Die Meldung wird darin nicht nochmals kopiert. Bei externen
+  Dateien sind `first_seen`/`last_seen` Verarbeitungszeiten; originale Zeitpräfixe
+  stehen in `first_runtime_timestamp`/`last_runtime_timestamp`, sofern vorhanden.
+- `session.json` enthält unter `deduplication` Gesamtzahl, eindeutige Zeilen und
+  unterdrückte Wiederholungen.
+- `dedup.sqlite3` speichert Fingerabdrücke, Zähler und Dateistände auf der Platte.
+  Ein auf 2048 Meldungen begrenzter Cache bündelt häufige Zähler-Updates.
+  Dadurch wird keine mit jeder neuen Logzeile wachsende RAM-Liste benötigt.
+
+Die Zwischenreihenfolge einzelner Wiederholungen wird zusammengefasst. Wer einen
+Ablauf untersucht, kann weiterhin die ersten Originalmeldungen, unterschiedliche
+Parameter sowie Häufigkeiten und Zeitspannen vergleichen. Nach harten Abbrüchen
+können die letzten noch nicht gespeicherten Zähler fehlen.
+
+Bereits vorhandene oder zunächst noch offene Dateien lassen sich später verarbeiten:
+
+```bash
+ge-wine --compact-logs "$HOME/.local/share/ge-wine/prefixes/icarus-vfun/logs/2026-11-07_12-00-00_123456_ab12cd34"
+```
+
+Den Beispielordner durch den tatsächlichen datierten Startordner ersetzen. Dieser
+Befehl startet kein Spiel. Er verarbeitet unkomprimierte `.log`-Dateien und
+`events.jsonl`, verändert keine Spiel-/Prefix-Dateien außerhalb dieses Logordners
+und lässt Archive sowie Speedhack-Anforderungen unverändert. Aktive GE-Wine-
+Aufzeichnungen werden abgelehnt. Gleichzeitige Kompaktierungen sind gesperrt.
+Unveränderte, bereits kompaktierte Dateien werden nicht erneut gezählt. Eine
+zwischenzeitlich ersetzte oder geänderte Datei wird als neue Dateigeneration
+eingelesen; deren alte Wiederholungszähler werden dabei ersetzt.

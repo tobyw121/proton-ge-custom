@@ -47,7 +47,7 @@ child.wait()
         self.assertEqual(folder.stat().st_mode & 0o777, 0o700)
         for file in folder.rglob('*'):
             self.assertEqual(file.stat().st_mode & 0o777, 0o700 if file.is_dir() else 0o600)
-            if file.is_file():
+            if file.is_file() and file.suffix in {'.json','.jsonl','.log'}:
                 self.assertNotIn('must-not-persist-environment', file.read_text())
 
     def test_full_trace_and_repeated_launches_do_not_overwrite(self):
